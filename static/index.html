@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KNE-Guards</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="navbar-inner">
+    <a href="#/dashboard" class="brand">
+      <span class="brand-mark">K</span>
+      <span>KNE-Guards</span>
+    </a>
+    <ul class="nav-tabs">
+      <li><a href="#/dashboard" data-route="dashboard">Dashboard</a></li>
+      <li><a href="#/products"  data-route="products">Products</a></li>
+      <li><a href="#/runs"      data-route="runs">Runs</a></li>
+      <li><a href="#/agents"    data-route="agents">Agents</a></li>
+      <li><a href="#/settings"  data-route="settings">Settings</a></li>
+    </ul>
+    <div class="nav-right">
+      <span id="apiStatus" class="api-status">Challenger: ?</span>
+      <div class="user-menu" id="userMenu">
+        <button id="userAvatar" class="avatar-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">
+          <span class="avatar" id="avatarInitial">?</span>
+        </button>
+        <div class="user-dropdown" id="userDropdown" hidden>
+          <div class="dropdown-email" id="userEmail">—</div>
+          <a href="#/settings" class="dropdown-item">Settings</a>
+          <button id="logout" class="dropdown-item dropdown-danger" type="button">Log out</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<main>
+
+  <!-- ======================= Dashboard view ======================= -->
+  <section class="view" data-view="dashboard">
+    <div class="view-header">
+      <div>
+        <h1>Dashboard</h1>
+        <p>Pitch a product. Stress-test it on synthetic students.</p>
+      </div>
+    </div>
+
+    <div class="dashboard-grid">
+      <section class="panel">
+        <h2>Product spec</h2>
+        <label>Name <input id="name" type="text"></label>
+        <label>Category <input id="category" type="text"></label>
+        <label>Price / month (USD) <input id="price" type="number" step="0.01" min="0"></label>
+        <label>Target segment <input id="segment" type="text"></label>
+        <label>Features (one per line)
+          <textarea id="features" rows="4"></textarea>
+        </label>
+        <label>Substitutes (comma-separated)
+          <input id="substitutes" type="text">
+        </label>
+        <label>Pitch (optional free-text)
+          <textarea id="pitch" rows="3" placeholder="Why will students adopt this? What's the elevator pitch?"></textarea>
+        </label>
+
+        <div class="controls">
+          <label>Personas <input id="personas" type="number" value="100" min="5" max="2000"></label>
+          <label>Days <input id="days" type="number" value="30" min="1" max="120"></label>
+          <label>Seed <input id="seed" type="number" value="42"></label>
+        </div>
+
+        <button id="challenge">Challenge my pitch</button>
+        <button id="run" class="secondary">Run simulation</button>
+        <button id="loadFixture" class="secondary">Load example</button>
+        <button id="saveSpec" class="secondary">Save as product</button>
+      </section>
+
+      <div>
+        <section class="panel challenge" id="challengePanel" hidden>
+          <h2>Pitch Challenge</h2>
+          <div id="challengeError" class="banner" hidden></div>
+          <div id="challengeBody" hidden>
+            <p id="cVerdict" class="verdict"></p>
+
+            <h3>Kill shots</h3>
+            <ul id="cKillShots" class="killshots"></ul>
+
+            <h3>Assumption challenges</h3>
+            <ul id="cAssumptions" class="assumptions"></ul>
+
+            <h3>Feature critiques</h3>
+            <ul id="cFeatures" class="features"></ul>
+
+            <h3>Substitute risks</h3>
+            <ul id="cSubstitutes" class="substitutes"></ul>
+
+            <h3>Segment coherence</h3>
+            <p id="cSegmentAssessment"></p>
+            <ul id="cSegmentConcerns" class="concerns"></ul>
+
+            <h3>Pricing risks</h3>
+            <p id="cPricingAssessment"></p>
+            <ul id="cPricingConcerns" class="concerns"></ul>
+
+            <h3>Steelman</h3>
+            <p id="cSteelman" class="steelman"></p>
+          </div>
+        </section>
+
+        <section class="panel results" id="results" hidden>
+          <h2 id="resultTitle">Results</h2>
+          <div class="kpis">
+            <div class="kpi"><span class="label">Adoption</span><span class="value" id="kAdoption">–</span></div>
+            <div class="kpi"><span class="label">Abandoned</span><span class="value" id="kAbandoned">–</span></div>
+            <div class="kpi"><span class="label">Switched</span><span class="value" id="kSwitched">–</span></div>
+            <div class="kpi big"><span class="label">Viability</span><span class="value" id="kViability">–</span></div>
+          </div>
+
+          <h3>Retention curve</h3>
+          <svg id="chart" viewBox="0 0 600 200" preserveAspectRatio="none"></svg>
+
+          <h3>By archetype</h3>
+          <table id="archetypes"><thead><tr><th>Archetype</th><th>Retained</th><th>Abandoned</th><th>Switched</th><th>N</th></tr></thead><tbody></tbody></table>
+
+          <h3>Switched to</h3>
+          <ul id="switchedTo"></ul>
+        </section>
+
+        <div id="dashboardEmpty" class="empty">
+          <strong>Nothing to show yet.</strong>
+          Pitch a product on the left, then challenge it or run a simulation.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= Products view ======================= -->
+  <section class="view" data-view="products" hidden>
+    <div class="view-header">
+      <div>
+        <h1>Saved products</h1>
+        <p>Specs you've stashed for later. Click one to load it back into the dashboard.</p>
+      </div>
+      <a href="#/dashboard" class="brand" style="font-size:0.9rem;">+ New from dashboard</a>
+    </div>
+    <div id="productsList"></div>
+  </section>
+
+  <!-- ======================= Runs view ======================= -->
+  <section class="view" data-view="runs" hidden>
+    <div class="view-header">
+      <div>
+        <h1>Run history</h1>
+        <p>Every simulation and pitch challenge you've executed. Click a row to view the full result.</p>
+      </div>
+    </div>
+    <div id="runsList"></div>
+  </section>
+
+  <!-- ======================= Agents view ======================= -->
+  <section class="view" data-view="agents" hidden>
+    <div class="view-header">
+      <div>
+        <h1>Agents</h1>
+        <p>The synthetic personas your pitch gets tested on, and the AI critic that will tear it apart first.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:0">Synthetic personas</h3>
+    <div id="agentsPersonas" class="card-grid"></div>
+
+    <h3>AI critic</h3>
+    <div id="agentsCritic" class="card-grid"></div>
+  </section>
+
+  <!-- ======================= Settings view ======================= -->
+  <section class="view" data-view="settings" hidden>
+    <div class="view-header">
+      <div>
+        <h1>Settings</h1>
+        <p>Account and environment.</p>
+      </div>
+    </div>
+
+    <div class="settings-grid">
+      <section class="panel">
+        <h2>Account</h2>
+        <div class="setting-row">
+          <span class="key">Email</span>
+          <span class="val" id="settingsEmail">—</span>
+        </div>
+        <div class="setting-row">
+          <span class="key">Session</span>
+          <span class="val">Active (HttpOnly cookie, 30-day TTL)</span>
+        </div>
+        <div class="setting-row">
+          <button id="settingsLogout" class="secondary">Log out of this browser</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Environment</h2>
+        <div class="setting-row">
+          <span class="key">Pitch Challenger</span>
+          <span class="val" id="settingsChallengerStatus">—</span>
+        </div>
+        <div class="setting-row">
+          <span class="key">Anthropic API key</span>
+          <span class="val" id="settingsKeyStatus">—</span>
+        </div>
+        <p style="font-size:0.85rem;color:var(--muted);margin:0.75rem 0 0;">
+          To enable Pitch Challenger, set <code>ANTHROPIC_API_KEY</code> in the shell that runs the server, then restart it.
+        </p>
+      </section>
+    </div>
+  </section>
+
+</main>
+
+<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
