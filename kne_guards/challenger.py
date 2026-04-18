@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+from .models import ProductSpec
+
+MODEL_DEFAULT = "claude-sonnet-4-6"
+
+SYSTEM_PROMPT = """You are a skeptical product critic and seed-stage investor evaluating a founder's pitch for a consumer product aimed at students. Your job is to CHALLENGE the pitch, not cheer for it.
+
+Be specific and grounded. Every critique must reference concrete fields the founder provided — named features, the exact price, the declared target segment, listed substitutes. Generic startup advice ("you need product-market fit", "founders should talk to users") is useless and forbidden.
+
+Voice:
+- Direct. Short sentences. No hedging.
+- Probing. Assume the founder is glossing over inconvenient facts.
+- Honest. If a claim is defensible, note it briefly in the steelman — but default to skepticism everywhere else.
+
+Ground rules:
+- Cite the spec's fields by name or value. "Anki is free" beats "your substitute is cheap". "$8.99/month" beats "your price".
+- Surface the 2–3 things MOST LIKELY TO KILL THE PRODUCT in kill_shots. Each must be concrete.
+- Emit exactly one feature_critiques entry per feature in the spec, in the same order.
+- Emit exactly one substitute_risks entry per substitute in the spec, in the same order.
+- Do not invent features, segments, or competitors the founder did not mention. If the spec is thin, flag that — do not fabricate.
+- Your entire response must come through the emit_critique tool. Do not produce prose outside the tool call."""
+
+EMIT_CRITIQUE_TOOL = {
+    "name": "emit_critique",
+    "description": "Emit the structured adversarial critique of the product pitch.",
+    "input_schema": {
+        "type": "object",
+        "required": [
+            "verdict",
+            "assumption_challenges",
+            "feature_critiques",
+            "substitute_risks",
+            "segment_coherence",
+            "pricing_risks",
+            "kill_shots",
+            "steelman",
+        ],
+        "properties": {
+            "verdict": {
+                "type": "string",
+                "description": "One-paragraph skeptical overall assessment of the pitch.",
+            },
+            "assumption_challenges": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["claim", "pushback", "severity"],
+                    "properties": {
+                        "claim": {
+                            "type": "string",
+                            "description": "An implicit assumption the spec or pitch is making.",
+                        },
+                        "pushback": {
+                            "type": "string",
+                            "description": "Concrete reason that assumption may not hold.",
+                        },
+                        "severity": {"type": "string", "enum": ["low", "med", "high"]},
+                    },
+                },
+            },
+            "feature_critiques": {
+                "type": "array",
+                "description": "Exactly one entry per feature in the spec, in the same order.",
+                "items": {
+                    "type": "object",
+                    "required": ["feature", "critique"],
+                    "properties": {
+                        "feature": {"type": "string"},
+                        "critique": {"type": "string"},
+                    },
+                },
+            },
+            "substitute_risks": {
+                "type": "array",
+                "description": "Exactly one entry per listed substitute, in the same order.",
+                "items": {
+                    "type": "object",
+                    "required": ["substitute", "why_it_wins"],
+                    "properties": {
+                        "substitute": {"type": "string"},
+                        "why_it_wins": {"type": "string"},
+                    },
+                },
+            },
+            "segment_coherence": {
+                "type": "object",
+                "required": ["assessment", "concerns"],
+                "properties": {
+                    "assessment": {"type": "string"},
+                    "concerns": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+            "pricing_risks": {
+                "type": "object",
+                "required": ["assessment", "concerns"],
+                "properties": {
+                    "assessment": {"type": "string"},
+                    "concerns": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+            "kill_shots": {
+                "type": "array",
+                "minItems": 1,
+                "description": "Top 2-3 risks that could sink the product.",
+                "items": {
+                    "type": "object",
+                    "required": ["risk", "why_it_kills"],
+                    "properties": {
+                        "risk": {"type": "string"},
+                        "why_it_kills": {"type": "string"},
+                    },
+                },
+            },
+            "steelman": {
+                "type": "string",
+                "description": "Strongest positive case for the idea, in one paragraph.",
+            },
+        },
+    },
+}
+
+
+def _format_spec(spec: ProductSpec, pitch_text: str | None) -> str:
+    features = "\n".join(f"    - {f}" for f in spec.features) or "    (none listed)"
+    subs = ", ".join(spec.substitutes) if spec.substitutes else "(none listed)"
+    lines = [
+        "Product spec:",
+        f"  Name: {spec.name}",
+        f"  Category: {spec.category}",
+        f"  Price: ${spec.price_monthly:.2f}/month",
+        f"  Target segment: {spec.target_segment}",
+        "  Features:",
+        features,
+        f"  Known substitutes: {subs}",
+    ]
+    if pitch_text:
+        lines += ["", "Pitch (free-text from founder):", pitch_text.strip()]
+    return "\n".join(lines)
+
+
+def challenge_pitch(
+    spec: ProductSpec,
+    *,
+    pitch_text: str | None = None,
+    model: str = MODEL_DEFAULT,
+    client=None,
+) -> dict:
+    if client is None:
+        import anthropic
+
+        client = anthropic.Anthropic()
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=4096,
+        system=[
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        tools=[{**EMIT_CRITIQUE_TOOL, "cache_control": {"type": "ephemeral"}}],
+        tool_choice={"type": "tool", "name": "emit_critique"},
+        messages=[{"role": "user", "content": _format_spec(spec, pitch_text)}],
+    )
+
+    for block in response.content:
+        block_type = getattr(block, "type", None) or (
+            block.get("type") if isinstance(block, dict) else None
+        )
+        if block_type == "tool_use":
+            payload = getattr(block, "input", None)
+            if payload is None and isinstance(block, dict):
+                payload = block.get("input")
+            if payload is not None:
+                return payload
+
+    raise RuntimeError("model did not return a tool_use block")

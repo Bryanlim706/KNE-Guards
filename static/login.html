@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KNE-Guards — Sign in</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="auth-body">
+  <main class="auth-main">
+    <section class="panel auth-panel">
+      <h1 class="auth-title">
+        <span class="brand-mark">K</span>
+        <span>KNE-Guards</span>
+      </h1>
+      <p class="tag">Sign in to stress-test your pitch.</p>
+
+      <div class="auth-tabs">
+        <button id="tabLogin" class="auth-tab active" type="button">Log in</button>
+        <button id="tabSignup" class="auth-tab" type="button">Sign up</button>
+      </div>
+
+      <form id="authForm" novalidate>
+        <label>Email
+          <input id="email" type="email" autocomplete="email" required>
+        </label>
+        <label>Password
+          <input id="password" type="password" autocomplete="current-password" required minlength="8">
+        </label>
+        <div id="authError" class="banner" hidden></div>
+        <button id="authSubmit" type="submit">Log in</button>
+      </form>
+    </section>
+  </main>
+  <script src="/login.js"></script>
+</body>
+</html>

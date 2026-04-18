@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local SQLite database
+kne_guards.db
+kne_guards.db-journal
+
+# Environment / secrets
+.env
+*.key

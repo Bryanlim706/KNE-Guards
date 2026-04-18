@@ -1,0 +1,12 @@
+{
+  "name": "FlashForge",
+  "category": "study tools",
+  "features": [
+    "AI-generated flashcards from lecture notes",
+    "spaced repetition scheduler",
+    "shared decks with classmates"
+  ],
+  "price_monthly": 8.99,
+  "target_segment": "undergraduate STEM students",
+  "substitutes": ["Anki", "Quizlet", "paper notes"]
+}
