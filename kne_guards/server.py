@@ -32,6 +32,17 @@ SESSION_COOKIE_CLEAR = f"{SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-
 
 
 def _parse_spec(spec_dict: dict) -> ProductSpec:
+    from .models import MechanismScores
+    mechanisms = None
+    m_raw = spec_dict.get("mechanisms")
+    if m_raw is not None:
+        mechanisms = MechanismScores(
+            R=float(m_raw["R"]),
+            U=float(m_raw["U"]),
+            W=float(m_raw["W"]),
+            F=float(m_raw["F"]),
+            M=float(m_raw["M"]),
+        )
     return ProductSpec(
         name=spec_dict["name"],
         category=spec_dict["category"],
@@ -39,6 +50,7 @@ def _parse_spec(spec_dict: dict) -> ProductSpec:
         price_monthly=float(spec_dict["price_monthly"]),
         target_segment=spec_dict["target_segment"],
         substitutes=list(spec_dict.get("substitutes", [])),
+        mechanisms=mechanisms,
     )
 
 
@@ -46,7 +58,7 @@ def _run_simulation(spec: ProductSpec, personas: int, days: int, seed: int) -> d
     people = generate_personas(personas, seed=seed)
     result = run_simulation(spec, people, days=days, seed=seed)
     report = build_report(result)
-    return {
+    payload = {
         "product_name": report.product_name,
         "days": report.days,
         "n_personas": report.n_personas,
@@ -59,6 +71,13 @@ def _run_simulation(spec: ProductSpec, personas: int, days: int, seed: int) -> d
         "switched_to": report.switched_to,
         "drop_off_by_day": report.drop_off_by_day,
     }
+    if report.survivability_score is not None:
+        payload["mechanism_scores"] = report.mechanism_scores
+        payload["archetype_survivability"] = report.archetype_survivability
+        payload["bottlenecks"] = report.bottlenecks
+        payload["survivability_score"] = report.survivability_score
+        payload["decision"] = report.decision
+    return payload
 
 
 def _save_run(
@@ -309,7 +328,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _simulate(self, user_id: int, body: dict) -> None:
         try:
-            spec = _parse_spec(body["spec"])
+            spec_dict = dict(body["spec"])
+            # Accept mechanism scores from a prior challenge run
+            if "mechanism_scores" in body and "mechanisms" not in spec_dict:
+                spec_dict["mechanisms"] = body["mechanism_scores"]
+            spec = _parse_spec(spec_dict)
             report = _run_simulation(
                 spec,
                 personas=int(body.get("personas", 100)),

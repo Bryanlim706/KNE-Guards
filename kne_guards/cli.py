@@ -12,7 +12,15 @@ from .tracking import Report, build_report
 
 
 def _load_spec(path: Path) -> ProductSpec:
+    from .models import MechanismScores
     data = json.loads(path.read_text())
+    mechanisms = None
+    if "mechanisms" in data:
+        m = data["mechanisms"]
+        mechanisms = MechanismScores(
+            R=float(m["R"]), U=float(m["U"]), W=float(m["W"]),
+            F=float(m["F"]), M=float(m["M"]),
+        )
     return ProductSpec(
         name=data["name"],
         category=data["category"],
@@ -20,6 +28,7 @@ def _load_spec(path: Path) -> ProductSpec:
         price_monthly=float(data["price_monthly"]),
         target_segment=data["target_segment"],
         substitutes=list(data.get("substitutes", [])),
+        mechanisms=mechanisms,
     )
 
 
@@ -56,6 +65,17 @@ def _render(report: Report) -> str:
         lines.append("Drop-off days (top 5):")
         for day, n in sorted(report.drop_off_by_day.items(), key=lambda x: -x[1])[:5]:
             lines.append(f"  Day {day}: {n}")
+    if report.survivability_score is not None:
+        ms = report.mechanism_scores
+        lines.append("")
+        lines.append(f"Survivability score: {report.survivability_score:.2f}   Decision: {report.decision}")
+        lines.append(
+            f"Mechanisms:  R={ms['R']:.2f}  U={ms['U']:.2f}  W={ms['W']:.2f}"
+            f"  F={ms['F']:.2f}  F'={ms['F_prime']:.2f}  M={ms['M']:.2f}"
+        )
+        if report.bottlenecks:
+            fragile = "  ".join(f"{a}({d})" for a, d in report.bottlenecks.items())
+            lines.append(f"Fragile archetypes: {fragile}")
     return "\n".join(lines)
 
 
@@ -98,6 +118,12 @@ def main(argv: list[str] | None = None) -> int:
             "switched_to": report.switched_to,
             "drop_off_by_day": report.drop_off_by_day,
         }
+        if report.survivability_score is not None:
+            payload["mechanism_scores"] = report.mechanism_scores
+            payload["archetype_survivability"] = report.archetype_survivability
+            payload["bottlenecks"] = report.bottlenecks
+            payload["survivability_score"] = report.survivability_score
+            payload["decision"] = report.decision
         print(json.dumps(payload, indent=2))
     else:
         print(_render(report))

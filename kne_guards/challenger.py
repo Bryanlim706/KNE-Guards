@@ -35,6 +35,7 @@ EMIT_CRITIQUE_TOOL = {
             "pricing_risks",
             "kill_shots",
             "steelman",
+            "mechanism_scores",
         ],
         "properties": {
             "verdict": {
@@ -116,6 +117,27 @@ EMIT_CRITIQUE_TOOL = {
                 "type": "string",
                 "description": "Strongest positive case for the idea, in one paragraph.",
             },
+            "mechanism_scores": {
+                "type": "object",
+                "description": (
+                    "Your analytical assessment of the product's lifecycle mechanism strengths. "
+                    "Score each dimension 0.0–1.0 based on the spec and pitch. "
+                    "Be honest — most early-stage products score 0.3–0.6 on most dimensions. "
+                    "R: how strongly does this replace an existing behavior? "
+                    "U: how often does the product give users a reason to return? "
+                    "W: how deeply embedded is this in existing workflows? "
+                    "F: how strong is organic non-viral discovery/inflow? "
+                    "M: how likely are users to actively recommend this to peers?"
+                ),
+                "required": ["R", "U", "W", "F", "M"],
+                "properties": {
+                    "R": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "U": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "W": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "F": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "M": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                },
+            },
         },
     },
 }
@@ -136,6 +158,11 @@ def _format_spec(spec: ProductSpec, pitch_text: str | None) -> str:
     ]
     if pitch_text:
         lines += ["", "Pitch (free-text from founder):", pitch_text.strip()]
+    lines += [
+        "",
+        "Also assign mechanism_scores (R/U/W/F/M) in your emit_critique output.",
+        "These are your analytical scores, not the founder's — derive them from the spec above.",
+    ]
     return "\n".join(lines)
 
 
