@@ -196,7 +196,6 @@ def challenge_pitch(
 ) -> dict:
     if client is None:
         from openai import OpenAI
-
         client = OpenAI()
 
     response = client.chat.completions.create(
