@@ -112,6 +112,20 @@ async function apiFetch(url, options) {
   return res;
 }
 
+async function readJson(res) {
+  const raw = await res.text();
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    const type = res.headers.get("content-type") || "unknown content type";
+    throw new Error(
+      `Expected JSON but received ${type} (status ${res.status}).`
+    );
+  }
+}
+
 function collectSpec() {
   return {
     name: $("name").value.trim(),
@@ -659,7 +673,7 @@ async function runSimulation() {
         seed: draft.seed,
       }),
     });
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) {
       toast(data.error || res.statusText, { type: "error" });
       return;
@@ -700,7 +714,7 @@ async function expressIdea() {
         pitch_text: draft.pitch || null,
       }),
     });
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) {
       toast(data.error || res.statusText, { type: "error" });
       return;
@@ -743,7 +757,7 @@ async function challengePitch() {
         pitch_text: draft.pitch || null,
       }),
     });
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) {
       toast(data.error || res.statusText, { type: "error" });
       return;
@@ -786,7 +800,10 @@ function applySuggestedPitch(fieldName) {
 async function loadFixture({ silent = false } = {}) {
   try {
     const res = await fetch("/fixture");
-    const spec = await res.json();
+    if (!res.ok) {
+      throw new Error(`Example request failed (${res.status}).`);
+    }
+    const spec = await readJson(res);
     applySpec(spec);
     $("pitch").value =
       "Students need a faster way to turn lecture notes into spaced repetition without building a workflow from scratch.";
@@ -833,7 +850,7 @@ async function saveProduct(name) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, spec }),
     });
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) {
       throw new Error(data.error || res.statusText);
     }
@@ -887,7 +904,7 @@ function resolveConfirmation(value) {
 async function refreshSpecs({ silent = false } = {}) {
   try {
     const res = await apiFetch("/specs");
-    const data = await res.json();
+    const data = await readJson(res);
     state.collections.specs = data.specs || [];
     updateGlobalCounts();
     if (getRoute() === "products") renderProducts();
@@ -956,7 +973,7 @@ function renderProducts() {
 async function refreshRuns({ silent = false } = {}) {
   try {
     const res = await apiFetch("/runs?limit=100");
-    const data = await res.json();
+    const data = await readJson(res);
     state.collections.runs = data.runs || [];
     updateGlobalCounts();
     if (getRoute() === "runs") renderRuns();
@@ -1050,7 +1067,7 @@ async function loadRunDetail(id) {
 
   try {
     const res = await apiFetch(`/runs/${id}`);
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) throw new Error(data.error || res.statusText);
     state.runDetails.set(id, data);
     renderRunDetail(data);
@@ -1145,7 +1162,7 @@ async function loadAgents() {
 
   try {
     const res = await apiFetch("/agents");
-    const data = await res.json();
+    const data = await readJson(res);
     state.agents = data;
     renderAgents();
   } catch (error) {
@@ -1235,7 +1252,7 @@ async function checkAuth() {
       window.location.href = "/login";
       return false;
     }
-    const data = await res.json();
+    const data = await readJson(res);
     state.me.email = data.email;
     state.me.challengerReady = Boolean(data.challenger_ready);
     setText("userEmail", data.email);

@@ -244,3 +244,53 @@ def test_save_spec_rejects_invalid_shape(running_server):
     )
     assert status == 400
     assert "invalid spec" in body["error"]
+
+
+def test_specs_list_skips_corrupted_saved_spec(running_server):
+    port = running_server
+    _, h, _ = _signup(port)
+    token = _cookie(h)
+
+    conn = db.get_connection()
+    try:
+        user_id = conn.execute("SELECT id FROM users WHERE email = ?", ("a@b.com",)).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO saved_specs (user_id, name, spec_json) VALUES (?, ?, ?)",
+            (user_id, "broken", "{not valid json"),
+        )
+        conn.execute(
+            "INSERT INTO saved_specs (user_id, name, spec_json) VALUES (?, ?, ?)",
+            (user_id, "good", json.dumps(SPEC_PAYLOAD)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    status, _, body = _request(port, "GET", "/specs", cookie=token)
+    assert status == 200
+    assert [item["name"] for item in body["specs"]] == ["good"]
+
+
+def test_run_detail_returns_json_error_when_saved_payload_is_corrupted(running_server):
+    port = running_server
+    _, h, _ = _signup(port)
+    token = _cookie(h)
+
+    conn = db.get_connection()
+    try:
+        user_id = conn.execute("SELECT id FROM users WHERE email = ?", ("a@b.com",)).fetchone()["id"]
+        cur = conn.execute(
+            """
+            INSERT INTO saved_runs (user_id, kind, product_name, result_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, "simulation", "broken run", "{not valid json"),
+        )
+        conn.commit()
+        run_id = cur.lastrowid
+    finally:
+        conn.close()
+
+    status, _, body = _request(port, "GET", f"/runs/{run_id}", cookie=token)
+    assert status == 500
+    assert body == {"error": "stored run is corrupted"}

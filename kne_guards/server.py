@@ -31,6 +31,14 @@ SESSION_COOKIE_SET = f"{SESSION_COOKIE}={{token}}; HttpOnly; SameSite=Lax; Path=
 SESSION_COOKIE_CLEAR = f"{SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
 
 
+def _load_stored_json(raw: str, *, label: str, row_id: int) -> dict | list | None:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        print(f"warning: invalid {label} JSON in row {row_id}")
+        return None
+
+
 def _parse_spec(spec_dict: dict) -> ProductSpec:
     from .models import MechanismScores
     mechanisms = None
@@ -413,19 +421,24 @@ class Handler(BaseHTTPRequestHandler):
             ).fetchall()
         finally:
             conn.close()
+        specs = []
+        for row in rows:
+            spec = _load_stored_json(
+                row["spec_json"], label="saved spec", row_id=row["id"]
+            )
+            if spec is None:
+                continue
+            specs.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "spec": spec,
+                    "created_at": row["created_at"],
+                }
+            )
         self._send_json(
             200,
-            {
-                "specs": [
-                    {
-                        "id": r["id"],
-                        "name": r["name"],
-                        "spec": json.loads(r["spec_json"]),
-                        "created_at": r["created_at"],
-                    }
-                    for r in rows
-                ]
-            },
+            {"specs": specs},
         )
 
     def _save_spec(self, user_id: int, body: dict) -> None:
@@ -515,13 +528,18 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
         if row is None:
             return self._send_json(404, {"error": "not found"})
+        result = _load_stored_json(
+            row["result_json"], label="saved run", row_id=row["id"]
+        )
+        if result is None:
+            return self._send_json(500, {"error": "stored run is corrupted"})
         self._send_json(
             200,
             {
                 "id": row["id"],
                 "kind": row["kind"],
                 "product_name": row["product_name"],
-                "result": json.loads(row["result_json"]),
+                "result": result,
                 "created_at": row["created_at"],
             },
         )

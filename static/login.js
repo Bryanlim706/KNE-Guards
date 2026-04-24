@@ -2,6 +2,20 @@ const $ = (id) => document.getElementById(id);
 
 let mode = "login";
 
+async function readJson(res) {
+  const raw = await res.text();
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    const type = res.headers.get("content-type") || "unknown content type";
+    throw new Error(
+      `Expected JSON but received ${type} (status ${res.status}).`
+    );
+  }
+}
+
 function setMode(next) {
   mode = next;
   const isLogin = mode === "login";
@@ -42,7 +56,7 @@ async function submit(e) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await readJson(res).catch(() => ({}));
     if (!res.ok) {
       err.textContent = data.error || `Request failed (${res.status}).`;
       err.hidden = false;
