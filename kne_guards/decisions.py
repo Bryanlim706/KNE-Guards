@@ -28,6 +28,18 @@ def decide(
     p = state.persona
     phase = _phase(day)
 
+    m = product.mechanisms
+    if m is not None:
+        daily_gain = DAILY_SATISFACTION_GAIN * (0.7 + 0.6 * m.U)
+        phase_cost = {k: v * (1 - 0.5 * m.W) for k, v in DISTRACTION_COST_BY_PHASE.items()}
+        abandon_thresh = max(0.1, ABANDON_THRESHOLD - 0.2 * m.R)
+        r_boost = 0.2 * m.R
+    else:
+        daily_gain = DAILY_SATISFACTION_GAIN
+        phase_cost = DISTRACTION_COST_BY_PHASE
+        abandon_thresh = ABANDON_THRESHOLD
+        r_boost = 0.0
+
     if state.abandoned or state.switched_to is not None:
         return DecisionEvent(
             day=day,
@@ -40,7 +52,7 @@ def decide(
         price_pressure = min(product.price_monthly / PRICE_BENCHMARK, 1.0)
         cost = p.price_sensitivity * price_pressure
         appeal = 0.55 * p.motivation + 0.45 * p.novelty_bias
-        try_score = appeal - cost + rng.uniform(-0.1, 0.1)
+        try_score = appeal - cost + rng.uniform(-0.1, 0.1) + r_boost
         if try_score > 0.35:
             state.engaged = True
             state.days_active = 1
@@ -58,13 +70,13 @@ def decide(
             reason=f"never tried (try_score={try_score:.2f})",
         )
 
-    distraction = DISTRACTION_COST_BY_PHASE[phase]
-    state.satisfaction += DAILY_SATISFACTION_GAIN * p.attention_span
+    distraction = phase_cost[phase]
+    state.satisfaction += daily_gain * p.attention_span
     state.satisfaction -= distraction * (1 - p.motivation)
     state.satisfaction = max(0.0, min(1.0, state.satisfaction))
     state.days_active += 1
 
-    if state.satisfaction < ABANDON_THRESHOLD and rng.random() < (1 - p.motivation):
+    if state.satisfaction < abandon_thresh and rng.random() < (1 - p.motivation):
         state.abandoned = True
         return DecisionEvent(
             day=day,

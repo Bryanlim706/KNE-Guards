@@ -13,6 +13,21 @@ class Action(str, Enum):
 
 
 @dataclass
+class MechanismScores:
+    R: float  # replacement cycle strength
+    U: float  # update cycle strength
+    W: float  # workflow integration depth
+    F: float  # baseline user refresh
+    M: float  # word-of-mouth propagation
+    strategy: str = "balanced"  # product strategy archetype assigned by the evaluator
+
+    def __post_init__(self) -> None:
+        for name, val in [("R", self.R), ("U", self.U), ("W", self.W), ("F", self.F), ("M", self.M)]:
+            if not (0.0 <= val <= 1.0):
+                raise ValueError(f"MechanismScores.{name}={val!r} must be in [0, 1]")
+
+
+@dataclass
 class ProductSpec:
     name: str
     category: str
@@ -20,6 +35,7 @@ class ProductSpec:
     price_monthly: float
     target_segment: str
     substitutes: list[str] = field(default_factory=list)
+    mechanisms: MechanismScores | None = field(default=None)
 
 
 @dataclass

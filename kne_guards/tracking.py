@@ -20,6 +20,12 @@ class Report:
     persona_breakdown: dict[str, dict[str, int]]
     viability_score: float
     switched_to: dict[str, int] = field(default_factory=dict)
+    # Mechanism layer — only populated when ProductSpec carries mechanism scores
+    mechanism_scores: dict[str, float] | None = field(default=None)
+    archetype_survivability: dict[str, dict] | None = field(default=None)
+    bottlenecks: dict[str, str] | None = field(default=None)
+    survivability_score: float | None = field(default=None)
+    decision: str | None = field(default=None)
 
 
 def _retained_on_day(result: SimulationResult, day: int) -> int:
@@ -72,6 +78,31 @@ def build_report(result: SimulationResult) -> Report:
         0.5 * day_30_retention + 0.3 * (ever_tried / n) + 0.2 * (1 - switched / n)
     )
 
+    mechanism_scores = None
+    archetype_survivability = None
+    bottlenecks = None
+    survivability_score = None
+    decision = None
+
+    if result.product.mechanisms is not None:
+        from .survivability import compute_survivability
+        surv = compute_survivability(
+            result.product.mechanisms,
+            strategy=result.product.mechanisms.strategy,
+        )
+        mechanism_scores = surv.mechanism_scores
+        archetype_survivability = {
+            arch: {
+                "scores": v.scores,
+                "S_a": v.S_a,
+                "active_killers": v.active_killers,
+            }
+            for arch, v in surv.archetype_survivability.items()
+        }
+        bottlenecks = surv.active_killers
+        survivability_score = surv.S_aggregate
+        decision = surv.decision
+
     return Report(
         product_name=result.product.name,
         days=result.days,
@@ -84,4 +115,9 @@ def build_report(result: SimulationResult) -> Report:
         persona_breakdown={k: dict(v) for k, v in persona_breakdown.items()},
         viability_score=viability,
         switched_to=switched_to,
+        mechanism_scores=mechanism_scores,
+        archetype_survivability=archetype_survivability,
+        bottlenecks=bottlenecks,
+        survivability_score=survivability_score,
+        decision=decision,
     )
