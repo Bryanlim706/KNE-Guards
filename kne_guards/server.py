@@ -193,7 +193,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "email": user["email"],
-                    "challenger_ready": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                    "challenger_ready": bool(os.environ.get("OPENAI_API_KEY")),
                 },
             )
 
@@ -213,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
                 "name": "Pitch Challenger",
                 "blurb": "Skeptical investor that adversarially critiques your pitch before the simulation runs. Surfaces kill-shots, weak features, pricing risks, and fragile assumptions.",
                 "model": MODEL_DEFAULT,
-                "ready": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                "ready": bool(os.environ.get("OPENAI_API_KEY")),
             }
             return self._send_json(200, {"personas": personas, "critic": critic})
 
@@ -355,8 +355,8 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError) as exc:
             return self._send_json(400, {"error": f"invalid spec: {exc}"})
 
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            return self._send_json(200, {"error": "ANTHROPIC_API_KEY not set"})
+        if not os.environ.get("OPENAI_API_KEY"):
+            return self._send_json(200, {"error": "OPENAI_API_KEY not set"})
 
         try:
             critique = challenge_pitch(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .models import ProductSpec
 
-MODEL_DEFAULT = "claude-sonnet-4-6"
+MODEL_DEFAULT = "gpt-4o"
 
 SYSTEM_PROMPT = """You are a skeptical product critic and seed-stage investor evaluating a founder's pitch for a consumer product aimed at students. Your job is to CHALLENGE the pitch, not cheer for it.
 
@@ -22,9 +22,11 @@ Ground rules:
 - Your entire response must come through the emit_critique tool. Do not produce prose outside the tool call."""
 
 EMIT_CRITIQUE_TOOL = {
+    "type": "function",
+    "function": {
     "name": "emit_critique",
     "description": "Emit the structured adversarial critique of the product pitch.",
-    "input_schema": {
+    "parameters": {
         "type": "object",
         "required": [
             "verdict",
@@ -155,6 +157,7 @@ EMIT_CRITIQUE_TOOL = {
             },
         },
     },
+    },
 }
 
 
@@ -189,35 +192,26 @@ def challenge_pitch(
     model: str = MODEL_DEFAULT,
     client=None,
 ) -> dict:
+    import json
+
     if client is None:
-        import anthropic
+        import openai
 
-        client = anthropic.Anthropic()
+        client = openai.OpenAI()
 
-    response = client.messages.create(
+    response = client.chat.completions.create(
         model=model,
         max_tokens=4096,
-        system=[
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
+        tools=[EMIT_CRITIQUE_TOOL],
+        tool_choice={"type": "function", "function": {"name": "emit_critique"}},
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": _format_spec(spec, pitch_text)},
         ],
-        tools=[{**EMIT_CRITIQUE_TOOL, "cache_control": {"type": "ephemeral"}}],
-        tool_choice={"type": "tool", "name": "emit_critique"},
-        messages=[{"role": "user", "content": _format_spec(spec, pitch_text)}],
     )
 
-    for block in response.content:
-        block_type = getattr(block, "type", None) or (
-            block.get("type") if isinstance(block, dict) else None
-        )
-        if block_type == "tool_use":
-            payload = getattr(block, "input", None)
-            if payload is None and isinstance(block, dict):
-                payload = block.get("input")
-            if payload is not None:
-                return payload
+    message = response.choices[0].message
+    if message.tool_calls:
+        return json.loads(message.tool_calls[0].function.arguments)
 
-    raise RuntimeError("model did not return a tool_use block")
+    raise RuntimeError("model did not return a tool call")

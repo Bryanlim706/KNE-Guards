@@ -48,19 +48,32 @@ _FAKE_CRITIQUE = {
 }
 
 
-class _FakeToolBlock:
-    type = "tool_use"
+class _FakeFunction:
+    def __init__(self, arguments: str) -> None:
+        self.arguments = arguments
 
+
+class _FakeToolCall:
     def __init__(self, payload: dict) -> None:
-        self.input = payload
+        self.function = _FakeFunction(json.dumps(payload))
+
+
+class _FakeMessage:
+    def __init__(self, payload: dict) -> None:
+        self.tool_calls = [_FakeToolCall(payload)]
+
+
+class _FakeChoice:
+    def __init__(self, payload: dict) -> None:
+        self.message = _FakeMessage(payload)
 
 
 class _FakeResponse:
     def __init__(self, payload: dict) -> None:
-        self.content = [_FakeToolBlock(payload)]
+        self.choices = [_FakeChoice(payload)]
 
 
-class _FakeMessages:
+class _FakeCompletions:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
         self.last_call: dict | None = None
@@ -70,9 +83,14 @@ class _FakeMessages:
         return _FakeResponse(self.payload)
 
 
+class _FakeChat:
+    def __init__(self, payload: dict) -> None:
+        self.completions = _FakeCompletions(payload)
+
+
 class _FakeClient:
     def __init__(self, payload: dict = _FAKE_CRITIQUE) -> None:
-        self.messages = _FakeMessages(payload)
+        self.chat = _FakeChat(payload)
 
 
 def test_challenge_pitch_returns_critique_and_forces_tool():
@@ -80,12 +98,12 @@ def test_challenge_pitch_returns_critique_and_forces_tool():
     result = challenge_pitch(_spec(), pitch_text="our pitch", client=fake)
 
     assert result == _FAKE_CRITIQUE
-    call = fake.messages.last_call
+    call = fake.chat.completions.last_call
     assert call is not None
-    assert call["tool_choice"] == {"type": "tool", "name": "emit_critique"}
-    assert any(t.get("name") == "emit_critique" for t in call["tools"])
+    assert call["tool_choice"] == {"type": "function", "function": {"name": "emit_critique"}}
+    assert any(t.get("function", {}).get("name") == "emit_critique" for t in call["tools"])
     # Spec fields should make it into the user prompt
-    user_content = call["messages"][0]["content"]
+    user_content = next(m["content"] for m in call["messages"] if m["role"] == "user")
     assert "Test" in user_content
     assert "$8.00" in user_content
     assert "Anki" in user_content
@@ -148,12 +166,12 @@ def _post(port: int, path: str, body: dict, cookie: str | None = None):
 
 
 def test_challenge_endpoint_error_when_key_missing(monkeypatch, running_server):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     port = running_server
     cookie = _signup(port)
     status, data = _post(port, "/challenge", {"spec": _spec_payload()}, cookie=cookie)
     assert status == 200
-    assert data == {"error": "ANTHROPIC_API_KEY not set"}
+    assert data == {"error": "OPENAI_API_KEY not set"}
 
 
 def test_challenge_endpoint_requires_auth(running_server):
@@ -163,7 +181,7 @@ def test_challenge_endpoint_requires_auth(running_server):
 
 
 def test_challenge_endpoint_wires_through_to_challenger(monkeypatch, running_server):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     captured: dict = {}
 
