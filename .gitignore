@@ -6,6 +6,9 @@ __pycache__/
 kne_guards.db
 kne_guards.db-journal
 
+# Virtual environment
+.venv/
+
 # Environment / secrets
 .env
 *.key
