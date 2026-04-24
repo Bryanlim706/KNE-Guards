@@ -10,7 +10,7 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from kne_guards import db, server as server_module
-from kne_guards.challenger import challenge_pitch
+from kne_guards.challenger import challenge_pitch, improve_pitch_expression
 from kne_guards.models import ProductSpec
 
 
@@ -47,50 +47,70 @@ _FAKE_CRITIQUE = {
     "steelman": "Could work if bundled with curriculum.",
 }
 
+_FAKE_EXPRESSION = {
+    "founder_framing": "Test gives undergrad STEM students a simpler way to stay on top of studying.",
+    "elevator_pitch": "Test helps undergrad STEM students turn course material into repeatable study sessions without building their own workflow.",
+    "pitch_deck_opening": "Students do not need more study tools. They need one that fits the way coursework already piles up.",
+    "audience_pains": [
+        "Students lose time stitching together fragmented study workflows.",
+        "Most tools require setup before they feel useful.",
+    ],
+    "differentiators": [
+        "Combines spaced repetition with LaTeX-friendly study material.",
+        "Targets undergrad STEM students directly instead of generic learners.",
+    ],
+    "story_beats": [
+        "The problem is workflow overhead, not lack of content.",
+        "The first win has to happen in the first study session.",
+    ],
+}
+
 
 class _FakeFunction:
-    def __init__(self, arguments: str) -> None:
+    def __init__(self, arguments: str, name: str = "emit_critique") -> None:
         self.arguments = arguments
+        self.name = name
 
 
 class _FakeToolCall:
-    def __init__(self, payload: dict) -> None:
-        self.function = _FakeFunction(json.dumps(payload))
+    def __init__(self, payload: dict, tool_name: str = "emit_critique") -> None:
+        self.function = _FakeFunction(json.dumps(payload), name=tool_name)
 
 
 class _FakeMessage:
-    def __init__(self, payload: dict) -> None:
-        self.tool_calls = [_FakeToolCall(payload)]
+    def __init__(self, payload: dict, tool_name: str = "emit_critique") -> None:
+        self.tool_calls = [_FakeToolCall(payload, tool_name=tool_name)]
 
 
 class _FakeChoice:
-    def __init__(self, payload: dict) -> None:
-        self.message = _FakeMessage(payload)
+    def __init__(self, payload: dict, tool_name: str = "emit_critique") -> None:
+        self.message = _FakeMessage(payload, tool_name=tool_name)
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict) -> None:
-        self.choices = [_FakeChoice(payload)]
+    def __init__(self, payload: dict, tool_name: str = "emit_critique") -> None:
+        self.choices = [_FakeChoice(payload, tool_name=tool_name)]
 
 
 class _FakeCompletions:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict, tool_name: str = "emit_critique") -> None:
         self.payload = payload
+        self.tool_name = tool_name
         self.last_call: dict | None = None
 
     def create(self, **kwargs):
         self.last_call = kwargs
-        return _FakeResponse(self.payload)
+        return _FakeResponse(self.payload, tool_name=self.tool_name)
 
 
 class _FakeChat:
-    def __init__(self, payload: dict) -> None:
-        self.completions = _FakeCompletions(payload)
+    def __init__(self, payload: dict, tool_name: str = "emit_critique") -> None:
+        self.completions = _FakeCompletions(payload, tool_name=tool_name)
 
 
 class _FakeClient:
-    def __init__(self, payload: dict = _FAKE_CRITIQUE) -> None:
-        self.chat = _FakeChat(payload)
+    def __init__(self, payload: dict = _FAKE_CRITIQUE, tool_name: str = "emit_critique") -> None:
+        self.chat = _FakeChat(payload, tool_name=tool_name)
 
 
 def test_challenge_pitch_returns_critique_and_forces_tool():
@@ -103,6 +123,22 @@ def test_challenge_pitch_returns_critique_and_forces_tool():
     assert call["tool_choice"] == {"type": "function", "function": {"name": "emit_critique"}}
     assert any(t.get("function", {}).get("name") == "emit_critique" for t in call["tools"])
     # Spec fields should make it into the user prompt
+    user_content = next(m["content"] for m in call["messages"] if m["role"] == "user")
+    assert "Test" in user_content
+    assert "$8.00" in user_content
+    assert "Anki" in user_content
+    assert "our pitch" in user_content
+
+
+def test_improve_pitch_expression_returns_structured_output_and_forces_tool():
+    fake = _FakeClient(_FAKE_EXPRESSION, tool_name="emit_expression_help")
+    result = improve_pitch_expression(_spec(), pitch_text="our pitch", client=fake)
+
+    assert result == _FAKE_EXPRESSION
+    call = fake.chat.completions.last_call
+    assert call is not None
+    assert call["tool_choice"] == {"type": "function", "function": {"name": "emit_expression_help"}}
+    assert any(t.get("function", {}).get("name") == "emit_expression_help" for t in call["tools"])
     user_content = next(m["content"] for m in call["messages"] if m["role"] == "user")
     assert "Test" in user_content
     assert "$8.00" in user_content
@@ -180,6 +216,21 @@ def test_challenge_endpoint_requires_auth(running_server):
     assert status == 401
 
 
+def test_express_idea_endpoint_error_when_key_missing(monkeypatch, running_server):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    port = running_server
+    cookie = _signup(port)
+    status, data = _post(port, "/express-idea", {"spec": _spec_payload()}, cookie=cookie)
+    assert status == 200
+    assert data == {"error": "OPENAI_API_KEY not set"}
+
+
+def test_express_idea_endpoint_requires_auth(running_server):
+    port = running_server
+    status, data = _post(port, "/express-idea", {"spec": _spec_payload()})
+    assert status == 401
+
+
 def test_challenge_endpoint_wires_through_to_challenger(monkeypatch, running_server):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
@@ -204,5 +255,32 @@ def test_challenge_endpoint_wires_through_to_challenger(monkeypatch, running_ser
     assert status == 200
     assert "_run_id" in data
     assert {k: v for k, v in data.items() if k != "_run_id"} == _FAKE_CRITIQUE
+    assert captured["spec"].name == "Test"
+    assert captured["pitch_text"] == "my pitch"
+
+
+def test_express_idea_endpoint_wires_through(monkeypatch, running_server):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    captured: dict = {}
+
+    def fake_improve_pitch_expression(spec, *, pitch_text=None, model=None):
+        captured["spec"] = spec
+        captured["pitch_text"] = pitch_text
+        captured["model"] = model
+        return dict(_FAKE_EXPRESSION)
+
+    monkeypatch.setattr(server_module, "improve_pitch_expression", fake_improve_pitch_expression)
+
+    port = running_server
+    cookie = _signup(port)
+    status, data = _post(
+        port,
+        "/express-idea",
+        {"spec": _spec_payload(), "pitch_text": "my pitch"},
+        cookie=cookie,
+    )
+    assert status == 200
+    assert data == _FAKE_EXPRESSION
     assert captured["spec"].name == "Test"
     assert captured["pitch_text"] == "my pitch"

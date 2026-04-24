@@ -445,6 +445,62 @@ code {
   color: var(--ink-soft);
 }
 
+.helper-copy {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.workflow-strip {
+  margin-bottom: 1rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.workflow-step {
+  display: flex;
+  gap: 0.8rem;
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(200, 186, 165, 0.7);
+  background: rgba(255, 251, 245, 0.7);
+  box-shadow: var(--shadow-sm);
+}
+
+.workflow-step span {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(27, 36, 48, 0.08);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.workflow-step strong {
+  display: block;
+  font-size: 0.96rem;
+}
+
+.workflow-step p {
+  margin-top: 0.28rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.workflow-step.emphasis {
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.14), rgba(255, 255, 255, 0.76));
+  border-color: rgba(15, 118, 110, 0.22);
+}
+
+.workflow-step.emphasis span {
+  background: linear-gradient(135deg, var(--teal), #2c9e94);
+  color: #fff;
+}
+
 /* Panels and cards */
 
 .panel,
@@ -907,6 +963,28 @@ button.small {
 .danger-list li {
   background: rgba(255, 216, 223, 0.5);
   border-color: rgba(181, 63, 77, 0.2);
+}
+
+.expression-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.45rem;
+}
+
+.expression-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.expression-block + .expression-block {
+  margin-top: 1rem;
+}
+
+.expression-block p {
+  color: var(--ink-soft);
 }
 
 /* Tables */
@@ -1577,6 +1655,7 @@ tbody tr.selected {
 
   .hero-band,
   .workspace-grid,
+  .workflow-strip,
   .runs-layout,
   .settings-grid,
   .auth-shell {
@@ -1601,6 +1680,7 @@ tbody tr.selected {
   }
 
   .brief-grid,
+  .expression-grid,
   .signal-grid,
   .insight-strip,
   .two-column-grid,
