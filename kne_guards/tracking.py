@@ -86,18 +86,20 @@ def build_report(result: SimulationResult) -> Report:
 
     if result.product.mechanisms is not None:
         from .survivability import compute_survivability
-        surv = compute_survivability(result.product.mechanisms)
+        surv = compute_survivability(
+            result.product.mechanisms,
+            strategy=result.product.mechanisms.strategy,
+        )
         mechanism_scores = surv.mechanism_scores
         archetype_survivability = {
             arch: {
                 "scores": v.scores,
                 "S_a": v.S_a,
-                "bottleneck_dim": v.bottleneck_dim,
-                "bottleneck_value": v.bottleneck_value,
+                "active_killers": v.active_killers,
             }
             for arch, v in surv.archetype_survivability.items()
         }
-        bottlenecks = surv.bottlenecks
+        bottlenecks = surv.active_killers
         survivability_score = surv.S_aggregate
         decision = surv.decision
 

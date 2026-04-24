@@ -42,6 +42,7 @@ def _parse_spec(spec_dict: dict) -> ProductSpec:
             W=float(m_raw["W"]),
             F=float(m_raw["F"]),
             M=float(m_raw["M"]),
+            strategy=str(m_raw.get("strategy", "balanced")),
         )
     return ProductSpec(
         name=spec_dict["name"],
@@ -329,9 +330,12 @@ class Handler(BaseHTTPRequestHandler):
     def _simulate(self, user_id: int, body: dict) -> None:
         try:
             spec_dict = dict(body["spec"])
-            # Accept mechanism scores from a prior challenge run
+            # Accept mechanism scores + strategy from a prior challenge run
             if "mechanism_scores" in body and "mechanisms" not in spec_dict:
-                spec_dict["mechanisms"] = body["mechanism_scores"]
+                spec_dict["mechanisms"] = {
+                    **body["mechanism_scores"],
+                    "strategy": body.get("product_strategy", "balanced"),
+                }
             spec = _parse_spec(spec_dict)
             report = _run_simulation(
                 spec,

@@ -19,6 +19,7 @@ class MechanismScores:
     W: float  # workflow integration depth
     F: float  # baseline user refresh
     M: float  # word-of-mouth propagation
+    strategy: str = "balanced"  # product strategy archetype assigned by the evaluator
 
     def __post_init__(self) -> None:
         for name, val in [("R", self.R), ("U", self.U), ("W", self.W), ("F", self.F), ("M", self.M)]:

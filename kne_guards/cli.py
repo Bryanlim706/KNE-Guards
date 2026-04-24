@@ -20,6 +20,7 @@ def _load_spec(path: Path) -> ProductSpec:
         mechanisms = MechanismScores(
             R=float(m["R"]), U=float(m["U"]), W=float(m["W"]),
             F=float(m["F"]), M=float(m["M"]),
+            strategy=str(m.get("strategy", "balanced")),
         )
     return ProductSpec(
         name=data["name"],
@@ -68,14 +69,19 @@ def _render(report: Report) -> str:
     if report.survivability_score is not None:
         ms = report.mechanism_scores
         lines.append("")
-        lines.append(f"Survivability score: {report.survivability_score:.2f}   Decision: {report.decision}")
+        lines.append(
+            f"Survivability score: {report.survivability_score:.2f}   "
+            f"Decision: {report.decision}   Strategy: {report.mechanism_scores.get('strategy', 'balanced')}"
+        )
         lines.append(
             f"Mechanisms:  R={ms['R']:.2f}  U={ms['U']:.2f}  W={ms['W']:.2f}"
             f"  F={ms['F']:.2f}  F'={ms['F_prime']:.2f}  M={ms['M']:.2f}"
         )
         if report.bottlenecks:
-            fragile = "  ".join(f"{a}({d})" for a, d in report.bottlenecks.items())
-            lines.append(f"Fragile archetypes: {fragile}")
+            parts = []
+            for arch, dims in report.bottlenecks.items():
+                parts.append(f"{arch}({','.join(dims)})")
+            lines.append(f"Active killers: {' '.join(parts)}")
     return "\n".join(lines)
 
 

@@ -36,6 +36,7 @@ EMIT_CRITIQUE_TOOL = {
             "kill_shots",
             "steelman",
             "mechanism_scores",
+            "product_strategy",
         ],
         "properties": {
             "verdict": {
@@ -138,6 +139,20 @@ EMIT_CRITIQUE_TOOL = {
                     "M": {"type": "number", "minimum": 0.0, "maximum": 1.0},
                 },
             },
+            "product_strategy": {
+                "type": "string",
+                "enum": ["viral", "workflow", "content", "replacement", "discovery", "balanced"],
+                "description": (
+                    "The dominant growth and retention strategy this product relies on. "
+                    "This determines which mechanism dimensions are load-bearing in the survivability model. "
+                    "viral: grows through peer sharing, M and F dominate. "
+                    "workflow: lives inside existing routines, W dominates. "
+                    "content: returns driven by fresh material, U dominates. "
+                    "replacement: displaces a specific existing tool, R dominates. "
+                    "discovery: found through organic channels, F dominates. "
+                    "balanced: no single dominant strategy — use only if genuinely unclear."
+                ),
+            },
         },
     },
 }
@@ -160,8 +175,9 @@ def _format_spec(spec: ProductSpec, pitch_text: str | None) -> str:
         lines += ["", "Pitch (free-text from founder):", pitch_text.strip()]
     lines += [
         "",
-        "Also assign mechanism_scores (R/U/W/F/M) in your emit_critique output.",
-        "These are your analytical scores, not the founder's — derive them from the spec above.",
+        "Also assign mechanism_scores (R/U/W/F/M) and product_strategy in your emit_critique output.",
+        "These are your analytical assessments — derive them from the spec, not from the founder.",
+        "product_strategy determines which dimensions are structurally load-bearing for this product.",
     ]
     return "\n".join(lines)
 
