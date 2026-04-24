@@ -6,7 +6,7 @@ const ROUTES = ["dashboard", "products", "runs", "agents", "settings"];
 const state = {
   me: { email: null, challengerReady: false },
   collections: { specs: [], runs: [] },
-  dashboard: { challenge: null, simulation: null, meta: "" },
+  dashboard: { expression: null, challenge: null, simulation: null, meta: "" },
   agents: null,
   runFilter: "all",
   selectedRunId: null,
@@ -21,6 +21,16 @@ const TOAST_TITLES = {
 };
 
 let confirmResolver = null;
+
+function setText(id, value) {
+  const el = $(id);
+  if (el) el.textContent = value;
+}
+
+function setHtml(id, value) {
+  const el = $(id);
+  if (el) el.innerHTML = value;
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -141,6 +151,7 @@ function applySpec(spec) {
   $("segment").value = spec.target_segment || "";
   $("features").value = (spec.features || []).join("\n");
   $("substitutes").value = (spec.substitutes || []).join(", ");
+  if ($("pitch")) $("pitch").value = spec.pitch_text || "";
   syncDraftPreview();
 }
 
@@ -186,8 +197,8 @@ function renderDraftPreview() {
   const draft = collectDraft();
   const { spec } = draft;
 
-  $("activeProductName").textContent = spec.name || "Untitled concept";
-  $("activeProductSummary").textContent = buildBriefSummary(spec);
+  setText("activeProductName", spec.name || "Untitled concept");
+  setText("activeProductSummary", buildBriefSummary(spec));
 
   const briefCards = [
     { label: "Category", value: spec.category || "Unspecified" },
@@ -198,35 +209,44 @@ function renderDraftPreview() {
     { label: "Run profile", value: `${draft.personas} personas / ${draft.days} days` },
   ];
 
-  $("briefCards").innerHTML = briefCards
-    .map(
-      (item) => `
-        <article class="brief-card">
-          <span>${escapeHtml(item.label)}</span>
-          <strong>${escapeHtml(item.value)}</strong>
-        </article>`
-    )
-    .join("");
+  setHtml(
+    "briefCards",
+    briefCards
+      .map(
+        (item) => `
+          <article class="brief-card">
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.value)}</strong>
+          </article>`
+      )
+      .join("")
+  );
 
   const tags = [
     ...spec.features.map((feature) => ({ label: feature, kind: "feature" })),
     ...spec.substitutes.map((substitute) => ({ label: substitute, kind: "substitute" })),
   ];
 
-  $("featureTags").innerHTML = tags.length
-    ? tags
-      .map(
-        (tag) =>
-          `<span class="tag ${tag.kind === "substitute" ? "substitute" : ""}">${escapeHtml(tag.label)}</span>`
-      )
+  setHtml(
+    "featureTags",
+    tags.length
+      ? tags
+        .map(
+          (tag) =>
+            `<span class="tag ${tag.kind === "substitute" ? "substitute" : ""}">${escapeHtml(tag.label)}</span>`
+        )
+        .join("")
+      : `<span class="tag muted">No features or substitutes added yet.</span>`
+  );
+
+  setHtml(
+    "hypothesisList",
+    buildHypotheses(draft)
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
       .join("")
-    : `<span class="tag muted">No features or substitutes added yet.</span>`;
+  );
 
-  $("hypothesisList").innerHTML = buildHypotheses(draft)
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
-    .join("");
-
-  $("heroPrice").textContent = currency(spec.price_monthly || 0);
+  setText("heroPrice", currency(spec.price_monthly || 0));
   renderSignalBoard();
 }
 
@@ -368,6 +388,7 @@ function buildSimulationInsights(report) {
 
 function renderSignalBoard() {
   const draft = collectDraft();
+  const expression = state.dashboard.expression;
   const challenge = state.dashboard.challenge;
   const simulation = state.dashboard.simulation;
 
@@ -377,6 +398,16 @@ function renderSignalBoard() {
       value: draft.spec.features.length ? "Ready" : "Needs detail",
       detail: `${draft.spec.features.length} features, ${draft.spec.substitutes.length} substitutes`,
       tone: draft.spec.features.length ? "good" : "warn",
+    },
+    {
+      label: "Expression AI",
+      value: expression ? (expression.error ? "Blocked" : "Ready") : "Not run",
+      detail: expression
+        ? expression.error
+          ? expression.error
+          : "Sharper pitch and deck opener available"
+        : "Turn rough notes into a clearer narrative first",
+      tone: expression ? (expression.error ? "bad" : "good") : "muted",
     },
     {
       label: "Challenger",
@@ -398,24 +429,27 @@ function renderSignalBoard() {
     },
   ];
 
-  $("signalGrid").innerHTML = cards
-    .map(
-      (card) => `
-        <article class="signal-card tone-${escapeHtml(card.tone)}">
-          <span>${escapeHtml(card.label)}</span>
-          <strong>${escapeHtml(card.value)}</strong>
-          <p>${escapeHtml(card.detail)}</p>
-        </article>`
-    )
-    .join("");
+  setHtml(
+    "signalGrid",
+    cards
+      .map(
+        (card) => `
+          <article class="signal-card tone-${escapeHtml(card.tone)}">
+            <span>${escapeHtml(card.label)}</span>
+            <strong>${escapeHtml(card.value)}</strong>
+            <p>${escapeHtml(card.detail)}</p>
+          </article>`
+      )
+      .join("")
+  );
 
-  $("runMeta").textContent = state.dashboard.meta || "";
+  setText("runMeta", state.dashboard.meta || "");
   setDashboardVisibility();
 }
 
 function setDashboardVisibility() {
-  const hasOutput = Boolean(state.dashboard.challenge || state.dashboard.simulation);
-  $("dashboardEmpty").hidden = hasOutput;
+  const hasOutput = Boolean(state.dashboard.expression || state.dashboard.challenge || state.dashboard.simulation);
+  if ($("dashboardEmpty")) $("dashboardEmpty").hidden = hasOutput;
 }
 
 function renderSimulation(report, meta = "") {
@@ -431,16 +465,19 @@ function renderSimulation(report, meta = "") {
 
   drawRetention(report.retention_curve || []);
 
-  $("simulationInsights").innerHTML = buildSimulationInsights(report)
-    .map(
-      (item) => `
-        <article class="insight-card tone-${escapeHtml(item.tone)}">
-          <span>${escapeHtml(item.label)}</span>
-          <strong>${escapeHtml(item.value)}</strong>
-          <p>${escapeHtml(item.detail)}</p>
-        </article>`
-    )
-    .join("");
+  setHtml(
+    "simulationInsights",
+    buildSimulationInsights(report)
+      .map(
+        (item) => `
+          <article class="insight-card tone-${escapeHtml(item.tone)}">
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.value)}</strong>
+            <p>${escapeHtml(item.detail)}</p>
+          </article>`
+      )
+      .join("")
+  );
 
   const tbody = document.querySelector("#archetypes tbody");
   tbody.innerHTML = "";
@@ -465,12 +502,58 @@ function renderSimulation(report, meta = "") {
     : `<li><strong>No switches</strong><span>Personas stayed or abandoned instead.</span></li>`;
 
   const dropEntries = Object.entries(report.drop_off_by_day || {}).sort((a, b) => Number(a[0]) - Number(b[0]));
-  $("dropoffList").innerHTML = dropEntries.length
-    ? dropEntries
-      .map(([day, count]) => `<li><strong>Day ${day}</strong><span>${count} first-time exits</span></li>`)
-      .join("")
-    : `<li><strong>No sharp drop-off</strong><span>The run did not record any first-time abandon or switch events.</span></li>`;
+  setHtml(
+    "dropoffList",
+    dropEntries.length
+      ? dropEntries
+        .map(([day, count]) => `<li><strong>Day ${day}</strong><span>${count} first-time exits</span></li>`)
+        .join("")
+      : `<li><strong>No sharp drop-off</strong><span>The run did not record any first-time abandon or switch events.</span></li>`
+  );
 
+  renderSignalBoard();
+}
+
+function renderExpression(data, meta = "") {
+  state.dashboard.expression = data;
+  state.dashboard.meta = meta;
+
+  const panel = $("expressionPanel");
+  if (panel) panel.hidden = false;
+
+  const errorEl = $("expressionError");
+  const bodyEl = $("expressionBody");
+  if (!errorEl || !bodyEl) {
+    renderSignalBoard();
+    return;
+  }
+
+  if (data.error) {
+    errorEl.hidden = false;
+    errorEl.textContent = data.error;
+    bodyEl.hidden = true;
+    renderSignalBoard();
+    return;
+  }
+
+  errorEl.hidden = true;
+  bodyEl.hidden = false;
+  setText("eFraming", data.founder_framing || "");
+  setText("ePitch", data.elevator_pitch || "");
+  setText("eDeckOpening", data.pitch_deck_opening || "");
+
+  const renderSimpleList = (id, items, emptyText) => {
+    setHtml(
+      id,
+      (items || []).length
+        ? items.map((item) => `<li><span>${escapeHtml(item)}</span></li>`).join("")
+        : `<li class="quiet">${escapeHtml(emptyText)}</li>`
+    );
+  };
+
+  renderSimpleList("ePains", data.audience_pains, "No audience pains returned.");
+  renderSimpleList("eDifferentiators", data.differentiators, "No differentiators returned.");
+  renderSimpleList("eStoryBeats", data.story_beats, "No story beats returned.");
   renderSignalBoard();
 }
 
@@ -595,6 +678,49 @@ async function runSimulation() {
   }
 }
 
+async function expressIdea() {
+  const draft = collectDraft();
+  const validationError = validateDraft(draft.spec);
+  if (validationError) {
+    toast(validationError, { type: "error", title: "Incomplete brief" });
+    return;
+  }
+
+  const button = $("expressIdea");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Writing...";
+
+  try {
+    const res = await apiFetch("/express-idea", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        spec: draft.spec,
+        pitch_text: draft.pitch || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || res.statusText, { type: "error" });
+      return;
+    }
+
+    renderExpression(data, "AI expression helper ready");
+    toast(
+      data.error ? data.error : "Sharper pitch language is ready to reuse.",
+      { title: data.error ? "Expression blocked" : "Expression ready", type: data.error ? "info" : "success" }
+    );
+  } catch (error) {
+    if (error.message !== "unauthenticated") {
+      toast(error.message, { type: "error", title: "Expression failed" });
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 async function challengePitch() {
   const draft = collectDraft();
   const validationError = validateDraft(draft.spec);
@@ -639,6 +765,24 @@ async function challengePitch() {
   }
 }
 
+function applySuggestedPitch(fieldName) {
+  const expression = state.dashboard.expression;
+  if (!expression || expression.error) {
+    toast("Generate AI wording first.", { type: "info", title: "No suggestion yet" });
+    return;
+  }
+
+  const value = expression[fieldName];
+  if (!value) {
+    toast("That suggestion is empty.", { type: "info", title: "Nothing to apply" });
+    return;
+  }
+
+  $("pitch").value = value;
+  syncDraftPreview();
+  toast("Inserted the AI suggestion into your draft pitch.", { title: "Pitch updated" });
+}
+
 async function loadFixture({ silent = false } = {}) {
   try {
     const res = await fetch("/fixture");
@@ -663,13 +807,15 @@ function openSaveDialog() {
 
   const dialog = $("saveDialog");
   const field = $("saveSpecName");
-  $("saveDialogError").hidden = true;
-  field.value = draft.spec.name;
+  if ($("saveDialogError")) $("saveDialogError").hidden = true;
+  if (field) field.value = draft.spec.name;
 
-  if (typeof dialog.showModal === "function") {
+  if (dialog && typeof dialog.showModal === "function") {
     dialog.showModal();
-    field.focus();
-    field.select();
+    if (field) {
+      field.focus();
+      field.select();
+    }
     return;
   }
 
@@ -679,7 +825,7 @@ function openSaveDialog() {
 
 async function saveProduct(name) {
   const draft = collectDraft();
-  const spec = draft.spec;
+  const spec = { ...draft.spec, pitch_text: draft.pitch || "" };
 
   try {
     const res = await apiFetch("/specs", {
@@ -697,7 +843,8 @@ async function saveProduct(name) {
     await refreshSpecs({ silent: true });
   } catch (error) {
     const err = $("saveDialogError");
-    if (err && $("saveDialog").open) {
+    const dialog = $("saveDialog");
+    if (err && dialog && dialog.open) {
       err.hidden = false;
       err.textContent = error.message;
       return;
@@ -712,7 +859,8 @@ function closeDialog(dialog) {
 }
 
 function askForConfirmation({ eyebrow = "Confirm", title, message, confirmLabel = "Confirm", danger = false }) {
-  if (typeof $("confirmDialog").showModal !== "function") {
+  const dialog = $("confirmDialog");
+  if (!dialog || typeof dialog.showModal !== "function") {
     return Promise.resolve(window.confirm(message));
   }
 
@@ -722,7 +870,7 @@ function askForConfirmation({ eyebrow = "Confirm", title, message, confirmLabel 
   $("confirmApprove").textContent = confirmLabel;
   $("confirmApprove").className = danger ? "danger" : "";
 
-  $("confirmDialog").showModal();
+  dialog.showModal();
   return new Promise((resolve) => {
     confirmResolver = resolve;
   });
@@ -913,6 +1061,7 @@ async function loadRunDetail(id) {
 
 function renderRunDetail(run, errorMessage = "") {
   const body = $("runDetailBody");
+  if (!body) return;
   if (errorMessage) {
     body.innerHTML = `<div class="banner banner-error">${escapeHtml(errorMessage)}</div>`;
     return;
@@ -957,7 +1106,8 @@ function renderRunDetail(run, errorMessage = "") {
       </div>`;
   }
 
-  $("openSelectedRun").addEventListener("click", () => restoreRun(run));
+  const openButton = $("openSelectedRun");
+  if (openButton) openButton.addEventListener("click", () => restoreRun(run));
 }
 
 function restoreRun(run) {
@@ -1049,18 +1199,21 @@ function renderAgents() {
 }
 
 function loadSettings() {
-  $("settingsEmail").textContent = state.me.email || "—";
-  $("settingsProductsCount").textContent = String(state.collections.specs.length);
-  $("settingsRunsCount").textContent = String(state.collections.runs.length);
-  $("settingsChallengerStatus").textContent = state.me.challengerReady ? "Ready" : "Disabled";
-  $("settingsKeyStatus").textContent = state.me.challengerReady ? "Configured" : "Not set";
-  $("settingsProfile").textContent = `${clampNumber($("personas").value, 100, 5, 2000)} personas / ${clampNumber($("days").value, 30, 1, 120)} days`;
+  setText("settingsEmail", state.me.email || "—");
+  setText("settingsProductsCount", String(state.collections.specs.length));
+  setText("settingsRunsCount", String(state.collections.runs.length));
+  setText("settingsChallengerStatus", state.me.challengerReady ? "Ready" : "Disabled");
+  setText("settingsKeyStatus", state.me.challengerReady ? "Configured" : "Not set");
+  setText(
+    "settingsProfile",
+    `${clampNumber($("personas").value, 100, 5, 2000)} personas / ${clampNumber($("days").value, 30, 1, 120)} days`
+  );
 }
 
 function updateGlobalCounts() {
-  $("heroSavedProducts").textContent = String(state.collections.specs.length);
-  $("heroRuns").textContent = String(state.collections.runs.length);
-  $("heroChallenger").textContent = state.me.challengerReady ? "Ready" : "Offline";
+  setText("heroSavedProducts", String(state.collections.specs.length));
+  setText("heroRuns", String(state.collections.runs.length));
+  setText("heroChallenger", state.me.challengerReady ? "Ready" : "Offline");
   loadSettings();
 }
 
@@ -1085,8 +1238,8 @@ async function checkAuth() {
     const data = await res.json();
     state.me.email = data.email;
     state.me.challengerReady = Boolean(data.challenger_ready);
-    $("userEmail").textContent = data.email;
-    $("avatarInitial").textContent = (data.email || "?").slice(0, 1).toUpperCase();
+    setText("userEmail", data.email);
+    setText("avatarInitial", (data.email || "?").slice(0, 1).toUpperCase());
     setApiStatus();
     updateGlobalCounts();
     return true;
@@ -1134,9 +1287,9 @@ function setActiveRoute() {
   $$(".nav-tabs a").forEach((link) => {
     link.classList.toggle("active", link.dataset.route === route);
   });
-  if (route === "dashboard" && !DASHBOARD_HAS_RESULT) $("dashboardEmpty").hidden = false;
-  if (route === "products") loadProducts();
-  if (route === "runs") loadRuns();
+  if (route === "dashboard") setDashboardVisibility();
+  if (route === "products") refreshSpecs({ silent: true }).then(() => renderProducts());
+  if (route === "runs") refreshRuns({ silent: true }).then(() => renderRuns());
   if (route === "agents") loadAgents();
   if (route === "settings") loadSettings();
 }
@@ -1159,6 +1312,8 @@ function bindFilterChips() {
 }
 
 function bindDialogControls() {
+  if (!$("saveDialogForm") || !$("confirmDialog")) return;
+
   $("saveDialogForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = $("saveSpecName").value.trim();
@@ -1184,6 +1339,7 @@ function bindDialogControls() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  $("expressIdea").addEventListener("click", expressIdea);
   $("run").addEventListener("click", runSimulation);
   $("challenge").addEventListener("click", challengePitch);
   $("loadFixture").addEventListener("click", () => loadFixture());
@@ -1191,6 +1347,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("logout").addEventListener("click", logout);
   $("settingsLogout").addEventListener("click", logout);
   $("userAvatar").addEventListener("click", toggleUserMenu);
+  $("useElevatorPitch").addEventListener("click", () => applySuggestedPitch("elevator_pitch"));
+  $("useDeckOpening").addEventListener("click", () => applySuggestedPitch("pitch_deck_opening"));
 
   bindFilterChips();
   bindDialogControls();

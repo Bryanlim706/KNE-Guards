@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import auth, db
-from .challenger import MODEL_DEFAULT, challenge_pitch
+from .challenger import MODEL_DEFAULT, challenge_pitch, improve_pitch_expression
 from .models import ProductSpec
 from .personas import ARCHETYPES, generate_personas
 from .simulation import run_simulation
@@ -268,6 +268,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self._challenge(user["id"], body)
 
+        if path == "/express-idea":
+            user = self._require_auth()
+            if user is None:
+                return
+            return self._express_idea(user["id"], body)
+
         if path == "/specs":
             user = self._require_auth()
             if user is None:
@@ -370,6 +376,26 @@ class Handler(BaseHTTPRequestHandler):
         run_id = _save_run(user_id, "challenge", spec.name, None, critique)
         critique["_run_id"] = run_id
         self._send_json(200, critique)
+
+    def _express_idea(self, user_id: int, body: dict) -> None:
+        try:
+            spec = _parse_spec(body["spec"])
+        except (KeyError, ValueError, TypeError) as exc:
+            return self._send_json(400, {"error": f"invalid spec: {exc}"})
+
+        if not os.environ.get("OPENAI_API_KEY"):
+            return self._send_json(200, {"error": "OPENAI_API_KEY not set"})
+
+        try:
+            expression = improve_pitch_expression(
+                spec,
+                pitch_text=body.get("pitch_text") or None,
+                model=body.get("model") or MODEL_DEFAULT,
+            )
+        except Exception as exc:
+            return self._send_json(200, {"error": str(exc)})
+
+        self._send_json(200, expression)
 
     # ---------- specs CRUD ----------
 

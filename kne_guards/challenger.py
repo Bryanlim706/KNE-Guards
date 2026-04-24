@@ -162,6 +162,66 @@ EMIT_CRITIQUE_TOOL = {
     },
 }
 
+EXPRESSION_SYSTEM_PROMPT = """You are a product storytelling editor helping a founder explain a student-focused product clearly before they turn it into a pitch deck.
+
+Your job is to make the idea more concrete, specific, and believable without inventing evidence or features that are not in the brief.
+
+Rules:
+- Ground every output in the exact product name, features, price, target segment, and substitutes provided.
+- Keep the writing crisp, founder-like, and easy to reuse in a pitch deck.
+- Do not use hypey claims like "revolutionary" or "game-changing".
+- Do not fabricate traction, metrics, partnerships, or user quotes.
+- If the brief is thin, help structure it anyway and note the missing sharpness through the wording.
+- Your entire response must come through the emit_expression_help tool."""
+
+EMIT_EXPRESSION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "emit_expression_help",
+        "description": "Emit structured language that helps a founder explain the product more clearly.",
+        "parameters": {
+            "type": "object",
+            "required": [
+                "founder_framing",
+                "elevator_pitch",
+                "pitch_deck_opening",
+                "audience_pains",
+                "differentiators",
+                "story_beats",
+            ],
+            "properties": {
+                "founder_framing": {
+                    "type": "string",
+                    "description": "A short paragraph that frames the idea clearly and concretely.",
+                },
+                "elevator_pitch": {
+                    "type": "string",
+                    "description": "A concise, improved pitch the founder can reuse directly.",
+                },
+                "pitch_deck_opening": {
+                    "type": "string",
+                    "description": "A sharper opening line for the first part of a pitch deck.",
+                },
+                "audience_pains": {
+                    "type": "array",
+                    "description": "Concrete user pains this product is addressing.",
+                    "items": {"type": "string"},
+                },
+                "differentiators": {
+                    "type": "array",
+                    "description": "Specific points that distinguish the product from substitutes.",
+                    "items": {"type": "string"},
+                },
+                "story_beats": {
+                    "type": "array",
+                    "description": "Short bullet-like beats the founder can use to tell the story in a deck.",
+                    "items": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
 
 def _format_spec(spec: ProductSpec, pitch_text: str | None) -> str:
     features = "\n".join(f"    - {f}" for f in spec.features) or "    (none listed)"
@@ -183,6 +243,32 @@ def _format_spec(spec: ProductSpec, pitch_text: str | None) -> str:
         "Also assign mechanism_scores (R/U/W/F/M) and product_strategy in your emit_critique output.",
         "These are your analytical assessments — derive them from the spec, not from the founder.",
         "product_strategy determines which dimensions are structurally load-bearing for this product.",
+    ]
+    return "\n".join(lines)
+
+
+def _format_expression_prompt(spec: ProductSpec, pitch_text: str | None) -> str:
+    features = "\n".join(f"    - {f}" for f in spec.features) or "    (none listed)"
+    substitutes = ", ".join(spec.substitutes) if spec.substitutes else "(none listed)"
+    lines = [
+        "Help the founder express this idea more clearly before they build a pitch deck.",
+        "",
+        "Product spec:",
+        f"  Name: {spec.name}",
+        f"  Category: {spec.category}",
+        f"  Price: ${spec.price_monthly:.2f}/month",
+        f"  Target segment: {spec.target_segment}",
+        "  Features:",
+        features,
+        f"  Known substitutes: {substitutes}",
+    ]
+    if pitch_text:
+        lines += ["", "Current founder draft:", pitch_text.strip()]
+    else:
+        lines += ["", "Current founder draft: (none provided)"]
+    lines += [
+        "",
+        "Write with enough specificity that the result can be copied into a pitch deck draft.",
     ]
     return "\n".join(lines)
 
@@ -213,6 +299,38 @@ def challenge_pitch(
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
                 if tc.function.name == "emit_critique":
+                    return json.loads(tc.function.arguments)
+
+    raise RuntimeError("model did not return a tool_use block")
+
+
+def improve_pitch_expression(
+    spec: ProductSpec,
+    *,
+    pitch_text: str | None = None,
+    model: str = MODEL_DEFAULT,
+    client=None,
+) -> dict:
+    if client is None:
+        from openai import OpenAI
+
+        client = OpenAI()
+
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=4096,
+        tools=[EMIT_EXPRESSION_TOOL],
+        tool_choice={"type": "function", "function": {"name": "emit_expression_help"}},
+        messages=[
+            {"role": "system", "content": EXPRESSION_SYSTEM_PROMPT},
+            {"role": "user", "content": _format_expression_prompt(spec, pitch_text)},
+        ],
+    )
+
+    for choice in response.choices:
+        if choice.message.tool_calls:
+            for tc in choice.message.tool_calls:
+                if tc.function.name == "emit_expression_help":
                     return json.loads(tc.function.arguments)
 
     raise RuntimeError("model did not return a tool_use block")
