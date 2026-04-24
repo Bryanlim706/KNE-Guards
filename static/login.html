@@ -6,32 +6,62 @@
   <title>KNE-Guards — Sign in</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body class="auth-body">
-  <main class="auth-main">
-    <section class="panel auth-panel">
+<body class="auth-page">
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <main class="auth-shell">
+    <section class="auth-aside">
+      <p class="eyebrow">Student product simulator</p>
       <h1 class="auth-title">
         <span class="brand-mark">K</span>
         <span>KNE-Guards</span>
       </h1>
-      <p class="tag">Sign in to stress-test your pitch.</p>
+      <p class="auth-lead">
+        Stress-test whether students will actually adopt, retain, or rotate through a product before you commit to building the wrong thing.
+      </p>
+
+      <div class="auth-points">
+        <article class="auth-point">
+          <strong>Challenge the pitch</strong>
+          <span>Run a skeptical critique against positioning, pricing, and fragile assumptions.</span>
+        </article>
+        <article class="auth-point">
+          <strong>Simulate behavior</strong>
+          <span>See how synthetic student personas try, continue, abandon, or switch over time.</span>
+        </article>
+        <article class="auth-point">
+          <strong>Keep the history</strong>
+          <span>Save briefs, compare runs, and revisit the strongest or weakest ideas later.</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="auth-panel">
+      <p class="eyebrow">Account</p>
+      <h2>Sign in to your workspace</h2>
+      <p>Use the same form for both returning and first-time accounts.</p>
 
       <div class="auth-tabs">
         <button id="tabLogin" class="auth-tab active" type="button">Log in</button>
         <button id="tabSignup" class="auth-tab" type="button">Sign up</button>
       </div>
 
-      <form id="authForm" novalidate>
+      <form id="authForm" class="auth-form" novalidate>
         <label>Email
           <input id="email" type="email" autocomplete="email" required>
         </label>
         <label>Password
           <input id="password" type="password" autocomplete="current-password" required minlength="8">
         </label>
-        <div id="authError" class="banner" hidden></div>
+
+        <div id="authError" class="banner banner-error" hidden></div>
+
         <button id="authSubmit" type="submit">Log in</button>
       </form>
     </section>
   </main>
+
   <script src="/login.js"></script>
 </body>
 </html>

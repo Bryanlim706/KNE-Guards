@@ -14,15 +14,15 @@ Idea mindmap
                                │
                                v
      ┌──────────────────────────────────────────────┐
-     │         CONSUMER AGENT GENERATOR            │
-     │  (Student / persona simulation builder)     │
+     │         CONSUMER AGENT GENERATOR             │
+     │  (Student / persona simulation builder)      │
      │                                              │
      │  Output:                                     │
      │  - behavior model                            │
      │  - attention span                            │
      │  - motivation triggers                       │
-     │  - substitution preferences                 │
-     └──────────────┬──────────────────────────────┘
+     │  - substitution preferences                  │
+     └──────────────┬──────────────────────────────-┘
                     │
                     v
    ┌──────────────────────────────────────────────────┐

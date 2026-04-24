@@ -1,67 +1,96 @@
-/* ============================================================
-   KNE-Guards — Frontend
-   ============================================================ */
-
 const $ = (id) => document.getElementById(id);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 const ROUTES = ["dashboard", "products", "runs", "agents", "settings"];
-const ME = { email: null, challenger_ready: false };
-let DASHBOARD_HAS_RESULT = false;
 
-/* -------- helpers -------- */
+const state = {
+  me: { email: null, challengerReady: false },
+  collections: { specs: [], runs: [] },
+  dashboard: { challenge: null, simulation: null, meta: "" },
+  agents: null,
+  runFilter: "all",
+  selectedRunId: null,
+  runDetails: new Map(),
+};
 
-function escapeHtml(s) {
-  return String(s ?? "")
+const TOAST_ICONS = { success: "✓", error: "!", info: "i" };
+const TOAST_TITLES = {
+  success: "Saved",
+  error: "Something went wrong",
+  info: "Heads up",
+};
+
+let confirmResolver = null;
+
+function escapeHtml(value) {
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
 
-function pct(x) { return (x * 100).toFixed(1) + "%"; }
-
-function setList(el, items, render) {
-  el.innerHTML = "";
-  items.forEach((item) => {
-    const li = document.createElement("li");
-    li.innerHTML = render(item);
-    el.appendChild(li);
-  });
+function pct(value) {
+  return `${(Number(value || 0) * 100).toFixed(1)}%`;
 }
 
-/* -------- toast notifications -------- */
+function currency(value) {
+  const amount = Number(value || 0);
+  return `$${amount.toFixed(amount % 1 === 0 ? 0 : 2)}`;
+}
 
-const TOAST_ICONS = { success: "✓", error: "!", info: "i" };
-const TOAST_TITLES = { success: "Saved", error: "Something went wrong", info: "Heads up" };
+function formatDate(raw) {
+  if (!raw) return "—";
+  return new Date(`${raw}Z`).toLocaleString();
+}
 
-function toast(message, { type = "success", title, duration = 3500 } = {}) {
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeLines(value) {
+  return String(value || "")
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeCsv(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toast(message, { type = "success", title, duration = 3200 } = {}) {
   const container = $("toastContainer");
   if (!container) return;
+
   const el = document.createElement("div");
   el.className = `toast ${type}`;
-  const titleText = title ?? TOAST_TITLES[type] ?? "";
   el.innerHTML = `
     <span class="toast-icon">${TOAST_ICONS[type] || "i"}</span>
-    <div class="toast-body">
-      <div class="toast-title"></div>
-      <div class="toast-msg"></div>
+    <div class="toast-copy">
+      <strong>${escapeHtml(title || TOAST_TITLES[type] || "")}</strong>
+      <span>${escapeHtml(message)}</span>
     </div>
-    <button class="toast-close" aria-label="Dismiss">×</button>`;
-  el.querySelector(".toast-title").textContent = titleText;
-  el.querySelector(".toast-msg").textContent = message;
+    <button class="toast-close" type="button" aria-label="Dismiss">×</button>`;
+
+  const dismiss = () => {
+    el.classList.add("leaving");
+    window.setTimeout(() => el.remove(), 180);
+  };
 
   let timer = null;
-  const dismiss = () => {
-    if (timer) clearTimeout(timer);
-    el.classList.add("leaving");
-    setTimeout(() => el.remove(), 200);
-  };
-  el.querySelector(".toast-close").addEventListener("click", dismiss);
-  el.addEventListener("mouseenter", () => { if (timer) { clearTimeout(timer); timer = null; } });
-  el.addEventListener("mouseleave", () => { if (duration > 0) timer = setTimeout(dismiss, 1500); });
+  if (duration > 0) timer = window.setTimeout(dismiss, duration);
+
+  el.querySelector(".toast-close").addEventListener("click", () => {
+    if (timer) window.clearTimeout(timer);
+    dismiss();
+  });
 
   container.appendChild(el);
-  if (duration > 0) timer = setTimeout(dismiss, duration);
 }
 
 async function apiFetch(url, options) {
@@ -73,17 +102,36 @@ async function apiFetch(url, options) {
   return res;
 }
 
-/* -------- spec form -------- */
-
 function collectSpec() {
   return {
     name: $("name").value.trim(),
     category: $("category").value.trim(),
-    price_monthly: parseFloat($("price").value),
+    price_monthly: Number.parseFloat($("price").value || "0"),
     target_segment: $("segment").value.trim(),
-    features: $("features").value.split("\n").map(s => s.trim()).filter(Boolean),
-    substitutes: $("substitutes").value.split(",").map(s => s.trim()).filter(Boolean),
+    features: normalizeLines($("features").value),
+    substitutes: normalizeCsv($("substitutes").value),
   };
+}
+
+function collectDraft() {
+  return {
+    spec: collectSpec(),
+    pitch: $("pitch").value.trim(),
+    personas: clampNumber($("personas").value, 100, 5, 2000),
+    days: clampNumber($("days").value, 30, 1, 120),
+    seed: clampNumber($("seed").value, 42, 0, 999999),
+  };
+}
+
+function validateDraft(spec) {
+  if (!spec.name) return "Add a product name first.";
+  if (!spec.category) return "Add a category so the brief is anchored.";
+  if (!Number.isFinite(spec.price_monthly) || spec.price_monthly < 0) {
+    return "Price must be a valid non-negative number.";
+  }
+  if (!spec.target_segment) return "Describe the student segment you are targeting.";
+  if (spec.features.length === 0) return "List at least one feature before running the model.";
+  return null;
 }
 
 function applySpec(spec) {
@@ -93,223 +141,546 @@ function applySpec(spec) {
   $("segment").value = spec.target_segment || "";
   $("features").value = (spec.features || []).join("\n");
   $("substitutes").value = (spec.substitutes || []).join(", ");
+  syncDraftPreview();
 }
 
-function clearForm() {
-  applySpec({});
-  $("pitch").value = "";
-  $("personas").value = 100;
-  $("days").value = 30;
-  $("seed").value = 42;
-  $("results").hidden = true;
-  $("challengePanel").hidden = true;
-  DASHBOARD_HAS_RESULT = false;
-  $("dashboardEmpty").hidden = false;
-  $("name").focus();
+function buildHypotheses(draft) {
+  const { spec, pitch, days, personas } = draft;
+  const firstFeature = spec.features[0] || "a clear daily win";
+  const leadSubstitute = spec.substitutes[0] || "free alternatives students already trust";
+  const priceLine =
+    spec.price_monthly > 0
+      ? `Students must feel ${currency(spec.price_monthly)}/month is justified within the first week.`
+      : "Free access shifts the risk from pricing to whether the habit loop is strong enough.";
+
+  const items = [
+    spec.target_segment
+      ? `${spec.target_segment} will try ${spec.name || "this product"} if "${firstFeature}" feels immediately useful.`
+      : "A clearly defined student segment needs to be convinced in the first session.",
+    priceLine,
+    `The product needs to beat ${leadSubstitute} on convenience, not just raw capability.`,
+    `A ${days}-day run across ${personas} personas will mostly reveal onboarding, retention, and substitution risk.`,
+  ];
+
+  if (pitch) {
+    items.push("The challenger will test whether the current narrative sounds specific, defensible, and believable.");
+  }
+
+  return items.slice(0, 4);
 }
 
-/* -------- retention chart -------- */
+function buildBriefSummary(spec) {
+  if (!spec.name && !spec.category && !spec.target_segment) {
+    return "Give the simulator a product brief and it will summarize the current bet here.";
+  }
+  const category = spec.category || "student product";
+  const segment = spec.target_segment || "students";
+  const firstFeature = spec.features[0];
+  if (firstFeature) {
+    return `${spec.name || "This concept"} is a ${category} bet for ${segment}. The lead promise is "${firstFeature}", with retention depending on whether that value shows up quickly.`;
+  }
+  return `${spec.name || "This concept"} is a ${category} bet for ${segment}. Add feature detail to make the simulator pressure the right assumptions.`;
+}
+
+function renderDraftPreview() {
+  const draft = collectDraft();
+  const { spec } = draft;
+
+  $("activeProductName").textContent = spec.name || "Untitled concept";
+  $("activeProductSummary").textContent = buildBriefSummary(spec);
+
+  const briefCards = [
+    { label: "Category", value: spec.category || "Unspecified" },
+    { label: "Segment", value: spec.target_segment || "Unspecified" },
+    { label: "Monthly price", value: currency(spec.price_monthly || 0) },
+    { label: "Feature count", value: String(spec.features.length || 0) },
+    { label: "Substitutes", value: String(spec.substitutes.length || 0) },
+    { label: "Run profile", value: `${draft.personas} personas / ${draft.days} days` },
+  ];
+
+  $("briefCards").innerHTML = briefCards
+    .map(
+      (item) => `
+        <article class="brief-card">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+        </article>`
+    )
+    .join("");
+
+  const tags = [
+    ...spec.features.map((feature) => ({ label: feature, kind: "feature" })),
+    ...spec.substitutes.map((substitute) => ({ label: substitute, kind: "substitute" })),
+  ];
+
+  $("featureTags").innerHTML = tags.length
+    ? tags
+      .map(
+        (tag) =>
+          `<span class="tag ${tag.kind === "substitute" ? "substitute" : ""}">${escapeHtml(tag.label)}</span>`
+      )
+      .join("")
+    : `<span class="tag muted">No features or substitutes added yet.</span>`;
+
+  $("hypothesisList").innerHTML = buildHypotheses(draft)
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+
+  $("heroPrice").textContent = currency(spec.price_monthly || 0);
+  renderSignalBoard();
+}
 
 function drawRetention(curve) {
   const svg = $("chart");
   svg.innerHTML = "";
-  const W = 600, H = 220, PAD = 28;
-  const n = curve.length;
-  if (n < 2) return;
 
-  const x = (i) => PAD + (i / (n - 1)) * (W - 2 * PAD);
-  const y = (v) => H - PAD - v * (H - 2 * PAD);
+  if (!Array.isArray(curve) || curve.length < 2) return;
+
+  const width = 600;
+  const height = 220;
+  const pad = 30;
   const ns = "http://www.w3.org/2000/svg";
+  const x = (index) => pad + (index / (curve.length - 1)) * (width - pad * 2);
+  const y = (value) => height - pad - value * (height - pad * 2);
 
-  for (let v = 0; v <= 1; v += 0.25) {
+  for (let marker = 0; marker <= 1; marker += 0.25) {
     const line = document.createElementNS(ns, "line");
-    line.setAttribute("x1", PAD); line.setAttribute("x2", W - PAD);
-    line.setAttribute("y1", y(v)); line.setAttribute("y2", y(v));
-    line.setAttribute("stroke", "#E9E5F2");
-    line.setAttribute("stroke-dasharray", "3 4");
+    line.setAttribute("x1", pad);
+    line.setAttribute("x2", width - pad);
+    line.setAttribute("y1", y(marker));
+    line.setAttribute("y2", y(marker));
+    line.setAttribute("stroke", "#d9d2c7");
+    line.setAttribute("stroke-dasharray", "4 5");
     svg.appendChild(line);
 
     const label = document.createElementNS(ns, "text");
-    label.setAttribute("x", 4); label.setAttribute("y", y(v) + 4);
-    label.setAttribute("fill", "#9B95B0"); label.setAttribute("font-size", "10");
-    label.textContent = (v * 100) + "%";
+    label.setAttribute("x", 2);
+    label.setAttribute("y", y(marker) + 4);
+    label.setAttribute("fill", "#7d6f62");
+    label.setAttribute("font-size", "10");
+    label.textContent = `${Math.round(marker * 100)}%`;
     svg.appendChild(label);
   }
 
   const area = document.createElementNS(ns, "path");
-  let d = `M ${x(0)} ${y(0)} `;
-  curve.forEach((v, i) => { d += `L ${x(i)} ${y(v)} `; });
-  d += `L ${x(n - 1)} ${y(0)} Z`;
-  area.setAttribute("d", d);
-  area.setAttribute("fill", "#7C3AED");
-  area.setAttribute("fill-opacity", "0.12");
+  let areaPath = `M ${x(0)} ${y(0)} `;
+  curve.forEach((value, index) => {
+    areaPath += `L ${x(index)} ${y(value)} `;
+  });
+  areaPath += `L ${x(curve.length - 1)} ${y(0)} Z`;
+  area.setAttribute("d", areaPath);
+  area.setAttribute("fill", "url(#retentionGradient)");
+
+  const defs = document.createElementNS(ns, "defs");
+  defs.innerHTML = `
+    <linearGradient id="retentionGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0f766e" stop-opacity="0.45"></stop>
+      <stop offset="100%" stop-color="#0f766e" stop-opacity="0.04"></stop>
+    </linearGradient>`;
+  svg.appendChild(defs);
   svg.appendChild(area);
 
   const path = document.createElementNS(ns, "path");
-  let pd = `M ${x(0)} ${y(curve[0])}`;
-  curve.forEach((v, i) => { if (i) pd += ` L ${x(i)} ${y(v)}`; });
-  path.setAttribute("d", pd);
+  let pathData = `M ${x(0)} ${y(curve[0])}`;
+  curve.forEach((value, index) => {
+    if (index) pathData += ` L ${x(index)} ${y(value)}`;
+  });
+  path.setAttribute("d", pathData);
   path.setAttribute("fill", "none");
-  path.setAttribute("stroke", "#7C3AED");
-  path.setAttribute("stroke-width", "2.5");
+  path.setAttribute("stroke", "#0f766e");
+  path.setAttribute("stroke-width", "3");
   path.setAttribute("stroke-linecap", "round");
   path.setAttribute("stroke-linejoin", "round");
   svg.appendChild(path);
 
-  const xAxis = document.createElementNS(ns, "text");
-  xAxis.setAttribute("x", W / 2); xAxis.setAttribute("y", H - 6);
-  xAxis.setAttribute("fill", "#9B95B0"); xAxis.setAttribute("font-size", "10");
-  xAxis.setAttribute("text-anchor", "middle");
-  xAxis.textContent = `Day 0 → Day ${n - 1}`;
-  svg.appendChild(xAxis);
+  const axis = document.createElementNS(ns, "text");
+  axis.setAttribute("x", width / 2);
+  axis.setAttribute("y", height - 6);
+  axis.setAttribute("fill", "#7d6f62");
+  axis.setAttribute("font-size", "10");
+  axis.setAttribute("text-anchor", "middle");
+  axis.textContent = `Day 0 to Day ${curve.length - 1}`;
+  svg.appendChild(axis);
 }
 
-/* -------- result rendering -------- */
+function buildSimulationInsights(report) {
+  const breakdown = Object.entries(report.persona_breakdown || {});
+  const ranked = breakdown
+    .map(([name, counts]) => {
+      const total = counts.total || 1;
+      return {
+        name,
+        retainedRate: counts.retained / total,
+        churnRate: (counts.abandoned + counts.switched) / total,
+      };
+    })
+    .sort((a, b) => b.retainedRate - a.retainedRate);
 
-function showDashboardResult() {
-  DASHBOARD_HAS_RESULT = true;
-  $("dashboardEmpty").hidden = true;
+  const strongest = ranked[0];
+  const weakest = ranked.slice().sort((a, b) => b.churnRate - a.churnRate)[0];
+
+  const dropEntries = Object.entries(report.drop_off_by_day || {}).sort((a, b) => b[1] - a[1]);
+  const topDrop = dropEntries[0];
+
+  const topSwitch = Object.entries(report.switched_to || {}).sort((a, b) => b[1] - a[1])[0];
+
+  let viabilityTone = "warn";
+  let viabilityLabel = "Mixed";
+  if (report.viability_score >= 0.75) {
+    viabilityTone = "good";
+    viabilityLabel = "Strong";
+  } else if (report.viability_score < 0.45) {
+    viabilityTone = "bad";
+    viabilityLabel = "Fragile";
+  }
+
+  return [
+    {
+      label: "Readiness",
+      value: viabilityLabel,
+      tone: viabilityTone,
+      detail: `Viability score ${report.viability_score.toFixed(2)}`,
+    },
+    {
+      label: "Best fit",
+      value: strongest ? strongest.name : "—",
+      tone: "good",
+      detail: strongest ? `${pct(strongest.retainedRate)} retained` : "No persona signal yet",
+    },
+    {
+      label: "Highest risk",
+      value: weakest ? weakest.name : "—",
+      tone: "bad",
+      detail: weakest ? `${pct(weakest.churnRate)} churned or switched` : "No churn signal yet",
+    },
+    {
+      label: "Primary threat",
+      value: topSwitch ? topSwitch[0] : topDrop ? `Day ${topDrop[0]}` : "Stable",
+      tone: "warn",
+      detail: topSwitch
+        ? `${topSwitch[1]} personas switched`
+        : topDrop
+          ? `${topDrop[1]} first-time drop-offs`
+          : "No obvious pressure point",
+    },
+  ];
 }
 
-function render(report) {
-  showDashboardResult();
+function renderSignalBoard() {
+  const draft = collectDraft();
+  const challenge = state.dashboard.challenge;
+  const simulation = state.dashboard.simulation;
+
+  const cards = [
+    {
+      label: "Draft completeness",
+      value: draft.spec.features.length ? "Ready" : "Needs detail",
+      detail: `${draft.spec.features.length} features, ${draft.spec.substitutes.length} substitutes`,
+      tone: draft.spec.features.length ? "good" : "warn",
+    },
+    {
+      label: "Challenger",
+      value: challenge ? (challenge.error ? "Blocked" : "Complete") : "Not run",
+      detail: challenge
+        ? challenge.error
+          ? challenge.error
+          : `${(challenge.kill_shots || []).length} kill shots surfaced`
+        : "Interrogate the pitch before simulating",
+      tone: challenge ? (challenge.error ? "bad" : "good") : "muted",
+    },
+    {
+      label: "Simulation",
+      value: simulation ? pct(simulation.adoption_rate) : "Not run",
+      detail: simulation
+        ? `${pct(simulation.switched_rate)} switched, viability ${simulation.viability_score.toFixed(2)}`
+        : "Run synthetic personas to get adoption and retention signal",
+      tone: simulation ? "good" : "muted",
+    },
+  ];
+
+  $("signalGrid").innerHTML = cards
+    .map(
+      (card) => `
+        <article class="signal-card tone-${escapeHtml(card.tone)}">
+          <span>${escapeHtml(card.label)}</span>
+          <strong>${escapeHtml(card.value)}</strong>
+          <p>${escapeHtml(card.detail)}</p>
+        </article>`
+    )
+    .join("");
+
+  $("runMeta").textContent = state.dashboard.meta || "";
+  setDashboardVisibility();
+}
+
+function setDashboardVisibility() {
+  const hasOutput = Boolean(state.dashboard.challenge || state.dashboard.simulation);
+  $("dashboardEmpty").hidden = hasOutput;
+}
+
+function renderSimulation(report, meta = "") {
+  state.dashboard.simulation = report;
+  state.dashboard.meta = meta;
+
   $("results").hidden = false;
-  $("resultTitle").textContent = `Results — ${report.product_name}`;
+  $("resultTitle").textContent = `Simulation results for ${report.product_name}`;
   $("kAdoption").textContent = pct(report.adoption_rate);
   $("kAbandoned").textContent = pct(report.abandoned_rate);
   $("kSwitched").textContent = pct(report.switched_rate);
   $("kViability").textContent = report.viability_score.toFixed(2);
 
-  drawRetention(report.retention_curve);
+  drawRetention(report.retention_curve || []);
+
+  $("simulationInsights").innerHTML = buildSimulationInsights(report)
+    .map(
+      (item) => `
+        <article class="insight-card tone-${escapeHtml(item.tone)}">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+          <p>${escapeHtml(item.detail)}</p>
+        </article>`
+    )
+    .join("");
 
   const tbody = document.querySelector("#archetypes tbody");
   tbody.innerHTML = "";
-  Object.entries(report.persona_breakdown).sort().forEach(([arch, c]) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td style="text-transform:capitalize">${arch}</td><td>${c.retained}</td><td>${c.abandoned}</td><td>${c.switched}</td><td>${c.total}</td>`;
-    tbody.appendChild(tr);
-  });
-
-  const ul = $("switchedTo");
-  ul.innerHTML = "";
-  const entries = Object.entries(report.switched_to || {}).sort((a, b) => b[1] - a[1]);
-  if (entries.length === 0) {
-    ul.innerHTML = "<li style='color:var(--muted)'>No personas switched.</li>";
-  } else {
-    entries.forEach(([sub, n]) => {
-      const li = document.createElement("li");
-      li.textContent = `${sub}: ${n}`;
-      ul.appendChild(li);
+  Object.entries(report.persona_breakdown || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([archetype, counts]) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td class="caps">${escapeHtml(archetype)}</td>
+        <td>${counts.retained}</td>
+        <td>${counts.abandoned}</td>
+        <td>${counts.switched}</td>
+        <td>${counts.total}</td>`;
+      tbody.appendChild(row);
     });
-  }
+
+  const switchedEntries = Object.entries(report.switched_to || {}).sort((a, b) => b[1] - a[1]);
+  $("switchedTo").innerHTML = switchedEntries.length
+    ? switchedEntries
+      .map(([name, count]) => `<li><strong>${escapeHtml(name)}</strong><span>${count} personas</span></li>`)
+      .join("")
+    : `<li><strong>No switches</strong><span>Personas stayed or abandoned instead.</span></li>`;
+
+  const dropEntries = Object.entries(report.drop_off_by_day || {}).sort((a, b) => Number(a[0]) - Number(b[0]));
+  $("dropoffList").innerHTML = dropEntries.length
+    ? dropEntries
+      .map(([day, count]) => `<li><strong>Day ${day}</strong><span>${count} first-time exits</span></li>`)
+      .join("")
+    : `<li><strong>No sharp drop-off</strong><span>The run did not record any first-time abandon or switch events.</span></li>`;
+
+  renderSignalBoard();
 }
 
-function renderChallenge(data) {
-  showDashboardResult();
-  const panel = $("challengePanel");
-  const errEl = $("challengeError");
-  const body = $("challengeBody");
-  panel.hidden = false;
+function renderChallenge(data, meta = "") {
+  state.dashboard.challenge = data;
+  state.dashboard.meta = meta;
+
+  $("challengePanel").hidden = false;
+  const errorEl = $("challengeError");
+  const bodyEl = $("challengeBody");
 
   if (data.error) {
-    errEl.hidden = false;
-    errEl.textContent = data.error;
-    body.hidden = true;
+    errorEl.hidden = false;
+    errorEl.textContent = data.error;
+    bodyEl.hidden = true;
+    renderSignalBoard();
     return;
   }
-  errEl.hidden = true;
-  body.hidden = false;
 
+  errorEl.hidden = true;
+  bodyEl.hidden = false;
   $("cVerdict").textContent = data.verdict || "";
 
-  setList($("cKillShots"), data.kill_shots || [], (k) =>
-    `<strong>${escapeHtml(k.risk)}</strong> — ${escapeHtml(k.why_it_kills)}`);
-  setList($("cAssumptions"), data.assumption_challenges || [], (a) =>
-    `<span class="chip sev-${escapeHtml(a.severity)}">${escapeHtml(a.severity)}</span> ` +
-    `<strong>${escapeHtml(a.claim)}</strong><div class="pushback">${escapeHtml(a.pushback)}</div>`);
-  setList($("cFeatures"), data.feature_critiques || [], (f) =>
-    `<strong>${escapeHtml(f.feature)}</strong> — ${escapeHtml(f.critique)}`);
-  setList($("cSubstitutes"), data.substitute_risks || [], (s) =>
-    `<strong>${escapeHtml(s.substitute)}</strong> — ${escapeHtml(s.why_it_wins)}`);
+  const renderStack = (target, items, mapper, emptyText) => {
+    target.innerHTML = (items || []).length
+      ? items.map(mapper).join("")
+      : `<li class="quiet">${escapeHtml(emptyText)}</li>`;
+  };
 
-  const seg = data.segment_coherence || {};
-  $("cSegmentAssessment").textContent = seg.assessment || "";
-  setList($("cSegmentConcerns"), seg.concerns || [], (c) => escapeHtml(c));
+  renderStack(
+    $("cKillShots"),
+    data.kill_shots,
+    (item) =>
+      `<li><strong>${escapeHtml(item.risk)}</strong><span>${escapeHtml(item.why_it_kills)}</span></li>`,
+    "No existential kill shots returned."
+  );
 
-  const pr = data.pricing_risks || {};
-  $("cPricingAssessment").textContent = pr.assessment || "";
-  setList($("cPricingConcerns"), pr.concerns || [], (c) => escapeHtml(c));
+  renderStack(
+    $("cAssumptions"),
+    data.assumption_challenges,
+    (item) =>
+      `<li><span class="chip sev-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><strong>${escapeHtml(item.claim)}</strong><span>${escapeHtml(item.pushback)}</span></li>`,
+    "No explicit assumption challenges returned."
+  );
 
-  $("cSteelman").textContent = data.steelman || "";
+  renderStack(
+    $("cFeatures"),
+    data.feature_critiques,
+    (item) => `<li><strong>${escapeHtml(item.feature)}</strong><span>${escapeHtml(item.critique)}</span></li>`,
+    "No feature-level critiques returned."
+  );
+
+  renderStack(
+    $("cSubstitutes"),
+    data.substitute_risks,
+    (item) => `<li><strong>${escapeHtml(item.substitute)}</strong><span>${escapeHtml(item.why_it_wins)}</span></li>`,
+    "No substitute risks returned."
+  );
+
+  const segment = data.segment_coherence || {};
+  $("cSegmentAssessment").textContent = segment.assessment || "No segment assessment returned.";
+  renderStack(
+    $("cSegmentConcerns"),
+    segment.concerns || [],
+    (item) => `<li><strong>Concern</strong><span>${escapeHtml(item)}</span></li>`,
+    "No segment concerns returned."
+  );
+
+  const pricing = data.pricing_risks || {};
+  $("cPricingAssessment").textContent = pricing.assessment || "No pricing assessment returned.";
+  renderStack(
+    $("cPricingConcerns"),
+    pricing.concerns || [],
+    (item) => `<li><strong>Risk</strong><span>${escapeHtml(item)}</span></li>`,
+    "No pricing concerns returned."
+  );
+
+  $("cSteelman").textContent = data.steelman || "No steelman argument returned.";
+  renderSignalBoard();
 }
 
-/* -------- API actions -------- */
+async function runSimulation() {
+  const draft = collectDraft();
+  const validationError = validateDraft(draft.spec);
+  if (validationError) {
+    toast(validationError, { type: "error", title: "Incomplete brief" });
+    return;
+  }
 
-async function run() {
-  const btn = $("run");
-  btn.disabled = true;
-  const label = btn.textContent;
-  btn.textContent = "Running…";
+  const button = $("run");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Running...";
+
   try {
     const res = await apiFetch("/simulate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        spec: collectSpec(),
-        personas: parseInt($("personas").value, 10),
-        days: parseInt($("days").value, 10),
-        seed: parseInt($("seed").value, 10),
+        spec: draft.spec,
+        personas: draft.personas,
+        days: draft.days,
+        seed: draft.seed,
       }),
     });
     const data = await res.json();
-    if (!res.ok) { alert("Error: " + (data.error || res.statusText)); return; }
-    render(data);
-  } catch (e) {
-    if (e.message !== "unauthenticated") alert("Request failed: " + e.message);
+    if (!res.ok) {
+      toast(data.error || res.statusText, { type: "error" });
+      return;
+    }
+
+    renderSimulation(data, `Latest run: simulation #${data._run_id}`);
+    toast(`Simulation #${data._run_id} completed.`, { title: "Run complete" });
+    await refreshRuns({ silent: true });
+  } catch (error) {
+    if (error.message !== "unauthenticated") {
+      toast(error.message, { type: "error", title: "Simulation failed" });
+    }
   } finally {
-    btn.disabled = false;
-    btn.textContent = label;
+    button.disabled = false;
+    button.textContent = original;
   }
 }
 
-async function challenge() {
-  const btn = $("challenge");
-  btn.disabled = true;
-  const label = btn.textContent;
-  btn.textContent = "Challenging…";
+async function challengePitch() {
+  const draft = collectDraft();
+  const validationError = validateDraft(draft.spec);
+  if (validationError) {
+    toast(validationError, { type: "error", title: "Incomplete brief" });
+    return;
+  }
+
+  const button = $("challenge");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Challenging...";
+
   try {
     const res = await apiFetch("/challenge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        spec: collectSpec(),
-        pitch_text: $("pitch").value.trim() || null,
+        spec: draft.spec,
+        pitch_text: draft.pitch || null,
       }),
     });
     const data = await res.json();
-    if (!res.ok) { alert("Error: " + (data.error || res.statusText)); return; }
-    renderChallenge(data);
-  } catch (e) {
-    if (e.message !== "unauthenticated") alert("Request failed: " + e.message);
+    if (!res.ok) {
+      toast(data.error || res.statusText, { type: "error" });
+      return;
+    }
+
+    renderChallenge(data, data._run_id ? `Latest run: challenge #${data._run_id}` : "Challenge completed");
+    toast(
+      data._run_id ? `Challenge #${data._run_id} completed.` : "Challenge completed.",
+      { title: data.error ? "Challenge blocked" : "Challenge finished", type: data.error ? "info" : "success" }
+    );
+    await refreshRuns({ silent: true });
+  } catch (error) {
+    if (error.message !== "unauthenticated") {
+      toast(error.message, { type: "error", title: "Challenge failed" });
+    }
   } finally {
-    btn.disabled = false;
-    btn.textContent = label;
+    button.disabled = false;
+    button.textContent = original;
   }
 }
 
-async function loadFixture() {
-  const res = await fetch("/fixture");
-  applySpec(await res.json());
+async function loadFixture({ silent = false } = {}) {
+  try {
+    const res = await fetch("/fixture");
+    const spec = await res.json();
+    applySpec(spec);
+    $("pitch").value =
+      "Students need a faster way to turn lecture notes into spaced repetition without building a workflow from scratch.";
+    syncDraftPreview();
+    if (!silent) toast("Loaded example brief into the composer.", { type: "info", title: "Example ready" });
+  } catch (error) {
+    toast(error.message, { type: "error", title: "Could not load example" });
+  }
 }
 
-async function saveSpec() {
-  const spec = collectSpec();
-  if (!spec.name) {
-    toast("Give your product a name first.", { type: "error", title: "Missing name" });
+function openSaveDialog() {
+  const draft = collectDraft();
+  const validationError = validateDraft(draft.spec);
+  if (validationError) {
+    toast(validationError, { type: "error", title: "Incomplete brief" });
     return;
   }
-  const name = prompt("Save this product as:", spec.name);
-  if (!name) return;
+
+  const dialog = $("saveDialog");
+  const field = $("saveSpecName");
+  $("saveDialogError").hidden = true;
+  field.value = draft.spec.name;
+
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+    field.focus();
+    field.select();
+    return;
+  }
+
+  const fallback = window.prompt("Save this product as:", draft.spec.name);
+  if (fallback) saveProduct(fallback);
+}
+
+async function saveProduct(name) {
+  const draft = collectDraft();
+  const spec = draft.spec;
+
   try {
     const res = await apiFetch("/specs", {
       method: "POST",
@@ -318,204 +689,408 @@ async function saveSpec() {
     });
     const data = await res.json();
     if (!res.ok) {
-      toast(data.error || res.statusText, { type: "error" });
+      throw new Error(data.error || res.statusText);
+    }
+
+    closeDialog($("saveDialog"));
+    toast(`"${name}" is now in your saved products.`, { title: "Product saved" });
+    await refreshSpecs({ silent: true });
+  } catch (error) {
+    const err = $("saveDialogError");
+    if (err && $("saveDialog").open) {
+      err.hidden = false;
+      err.textContent = error.message;
       return;
     }
-    clearForm();
-    toast(`"${name}" is now in your products.`, {
-      type: "success",
-      title: "Product saved",
-    });
-  } catch (e) {
-    if (e.message !== "unauthenticated") toast(e.message, { type: "error" });
+    toast(error.message, { type: "error", title: "Save failed" });
   }
 }
 
-/* -------- views: products / runs / agents / settings -------- */
+function closeDialog(dialog) {
+  if (!dialog) return;
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+}
 
-async function loadProducts() {
-  const list = $("productsList");
-  list.innerHTML = `<div class="empty">Loading…</div>`;
+function askForConfirmation({ eyebrow = "Confirm", title, message, confirmLabel = "Confirm", danger = false }) {
+  if (typeof $("confirmDialog").showModal !== "function") {
+    return Promise.resolve(window.confirm(message));
+  }
+
+  $("confirmEyebrow").textContent = eyebrow;
+  $("confirmTitle").textContent = title;
+  $("confirmMessage").textContent = message;
+  $("confirmApprove").textContent = confirmLabel;
+  $("confirmApprove").className = danger ? "danger" : "";
+
+  $("confirmDialog").showModal();
+  return new Promise((resolve) => {
+    confirmResolver = resolve;
+  });
+}
+
+function resolveConfirmation(value) {
+  closeDialog($("confirmDialog"));
+  if (confirmResolver) {
+    confirmResolver(value);
+    confirmResolver = null;
+  }
+}
+
+async function refreshSpecs({ silent = false } = {}) {
   try {
     const res = await apiFetch("/specs");
     const data = await res.json();
-    if (!data.specs || data.specs.length === 0) {
-      list.innerHTML = `<div class="empty"><strong>No saved products yet.</strong>Save a spec from the Dashboard to keep it here.</div>`;
-      return;
+    state.collections.specs = data.specs || [];
+    updateGlobalCounts();
+    if (getRoute() === "products") renderProducts();
+  } catch (error) {
+    if (!silent && error.message !== "unauthenticated") {
+      toast(error.message, { type: "error", title: "Could not load products" });
     }
-    list.className = "card-grid";
-    list.innerHTML = "";
-    data.specs.forEach((s) => {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <div>
-          <p class="card-title">${escapeHtml(s.name)}</p>
-          <p class="card-sub">${escapeHtml(s.spec.category || "—")} · $${(s.spec.price_monthly ?? 0).toFixed(2)}/mo</p>
-        </div>
-        <div class="card-body">
-          <div style="margin-bottom:0.4rem;"><strong>Segment:</strong> ${escapeHtml(s.spec.target_segment || "—")}</div>
-          <div><strong>Features:</strong> ${(s.spec.features || []).length}</div>
-        </div>
-        <div class="card-footer">
-          <button data-act="load">Load into dashboard</button>
-          <button class="link" data-act="del" title="Delete">×</button>
-        </div>`;
-      card.querySelector('[data-act="load"]').addEventListener("click", () => {
-        applySpec(s.spec);
-        window.location.hash = "#/dashboard";
-      });
-      card.querySelector('[data-act="del"]').addEventListener("click", async () => {
-        if (!confirm(`Delete "${s.name}"?`)) return;
-        await apiFetch(`/specs/${s.id}`, { method: "DELETE" });
-        loadProducts();
-      });
-      list.appendChild(card);
-    });
-  } catch (e) {
-    if (e.message !== "unauthenticated") list.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
-async function loadRuns() {
-  const wrap = $("runsList");
-  wrap.innerHTML = `<div class="empty">Loading…</div>`;
+function renderProducts() {
+  const list = $("productsList");
+  if (state.collections.specs.length === 0) {
+    list.innerHTML = `<div class="empty-state grid-empty"><strong>No saved products yet.</strong>Save a brief from the dashboard and it will show up here.</div>`;
+    return;
+  }
+
+  list.innerHTML = "";
+  state.collections.specs.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "card";
+    const features = (item.spec.features || []).slice(0, 3);
+    card.innerHTML = `
+      <div class="card-head">
+        <div>
+          <p class="card-title">${escapeHtml(item.name)}</p>
+          <p class="card-sub">${escapeHtml(item.spec.category || "Unspecified")} · ${currency(item.spec.price_monthly || 0)}/mo</p>
+        </div>
+        <span class="chip">${formatDate(item.created_at)}</span>
+      </div>
+      <p class="card-copy">${escapeHtml(item.spec.target_segment || "No target segment")}</p>
+      <div class="tag-cloud compact">
+        ${features.map((feature) => `<span class="tag">${escapeHtml(feature)}</span>`).join("")}
+        ${features.length === 0 ? `<span class="tag muted">No features listed</span>` : ""}
+      </div>
+      <div class="card-actions">
+        <button type="button" data-action="load">Load into dashboard</button>
+        <button type="button" class="ghost" data-action="delete">Delete</button>
+      </div>`;
+
+    card.querySelector('[data-action="load"]').addEventListener("click", () => {
+      applySpec(item.spec);
+      window.location.hash = "#/dashboard";
+      toast(`Loaded "${item.name}" into the dashboard.`, { type: "info", title: "Product loaded" });
+    });
+
+    card.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+      const approved = await askForConfirmation({
+        eyebrow: "Delete",
+        title: "Delete saved product?",
+        message: `Remove "${item.name}" from your saved products?`,
+        confirmLabel: "Delete product",
+        danger: true,
+      });
+      if (!approved) return;
+      await apiFetch(`/specs/${item.id}`, { method: "DELETE" });
+      toast(`Deleted "${item.name}".`, { type: "info", title: "Product removed" });
+      await refreshSpecs({ silent: true });
+      renderProducts();
+    });
+
+    list.appendChild(card);
+  });
+}
+
+async function refreshRuns({ silent = false } = {}) {
   try {
     const res = await apiFetch("/runs?limit=100");
     const data = await res.json();
-    if (!data.runs || data.runs.length === 0) {
-      wrap.innerHTML = `<div class="empty"><strong>No runs yet.</strong>Run a simulation or challenge a pitch from the Dashboard.</div>`;
-      return;
+    state.collections.runs = data.runs || [];
+    updateGlobalCounts();
+    if (getRoute() === "runs") renderRuns();
+  } catch (error) {
+    if (!silent && error.message !== "unauthenticated") {
+      toast(error.message, { type: "error", title: "Could not load runs" });
     }
-    wrap.innerHTML = `
-      <section class="panel" style="padding:0;overflow:hidden;">
-        <table>
-          <thead><tr><th>Date</th><th>Type</th><th>Product</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>`;
-    const tbody = wrap.querySelector("tbody");
-    data.runs.forEach((r) => {
-      const tr = document.createElement("tr");
-      tr.style.cursor = "pointer";
-      const date = new Date(r.created_at + "Z").toLocaleString();
-      const kindLabel = r.kind === "challenge" ? "Challenge" : "Simulation";
-      tr.innerHTML = `
-        <td>${escapeHtml(date)}</td>
-        <td><span class="chip tag-${escapeHtml(r.kind)}">${kindLabel}</span></td>
-        <td>${escapeHtml(r.product_name || "—")}</td>
-        <td style="text-align:right;"><button class="link" data-act="del" title="Delete">×</button></td>`;
-      tr.addEventListener("click", (e) => {
-        if (e.target.dataset.act === "del") return;
-        restoreRun(r.id);
-      });
-      tr.querySelector('[data-act="del"]').addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (!confirm("Delete this run?")) return;
-        await apiFetch(`/runs/${r.id}`, { method: "DELETE" });
-        loadRuns();
-      });
-      tbody.appendChild(tr);
-    });
-  } catch (e) {
-    if (e.message !== "unauthenticated") wrap.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
-async function restoreRun(id) {
+function filteredRuns() {
+  if (state.runFilter === "all") return state.collections.runs;
+  return state.collections.runs.filter((run) => run.kind === state.runFilter);
+}
+
+function renderRuns() {
+  const wrap = $("runsList");
+  const runs = filteredRuns();
+
+  if (runs.length === 0) {
+    wrap.innerHTML = `<div class="detail-placeholder">No ${state.runFilter === "all" ? "" : state.runFilter} runs yet.</div>`;
+    renderRunDetail(null);
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="run-table">
+      <thead>
+        <tr>
+          <th>Created</th>
+          <th>Type</th>
+          <th>Product</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>`;
+
+  const tbody = wrap.querySelector("tbody");
+  runs.forEach((run) => {
+    const row = document.createElement("tr");
+    row.className = run.id === state.selectedRunId ? "selected" : "";
+    row.innerHTML = `
+      <td>${escapeHtml(formatDate(run.created_at))}</td>
+      <td><span class="chip ${run.kind === "challenge" ? "tag-challenge" : "tag-simulation"}">${escapeHtml(run.kind)}</span></td>
+      <td>${escapeHtml(run.product_name || "Unnamed product")}</td>
+      <td class="cell-actions"><button type="button" class="ghost small" data-action="delete">Delete</button></td>`;
+
+    row.addEventListener("click", (event) => {
+      if (event.target.dataset.action === "delete") return;
+      loadRunDetail(run.id);
+    });
+
+    row.querySelector('[data-action="delete"]').addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const approved = await askForConfirmation({
+        eyebrow: "Delete",
+        title: "Delete run?",
+        message: `Delete ${run.kind} run for "${run.product_name}"?`,
+        confirmLabel: "Delete run",
+        danger: true,
+      });
+      if (!approved) return;
+      await apiFetch(`/runs/${run.id}`, { method: "DELETE" });
+      if (state.selectedRunId === run.id) {
+        state.selectedRunId = null;
+        renderRunDetail(null);
+      }
+      state.runDetails.delete(run.id);
+      await refreshRuns({ silent: true });
+      renderRuns();
+      toast("Run deleted.", { type: "info", title: "Removed" });
+    });
+
+    tbody.appendChild(row);
+  });
+
+  if (!state.selectedRunId && runs[0]) {
+    loadRunDetail(runs[0].id);
+  }
+}
+
+async function loadRunDetail(id) {
+  state.selectedRunId = id;
+  renderRuns();
+
+  if (state.runDetails.has(id)) {
+    renderRunDetail(state.runDetails.get(id));
+    return;
+  }
+
   try {
     const res = await apiFetch(`/runs/${id}`);
     const data = await res.json();
-    if (!res.ok) { alert("Error: " + (data.error || res.statusText)); return; }
-    if (data.kind === "simulation") render(data.result);
-    else if (data.kind === "challenge") renderChallenge(data.result);
-    window.location.hash = "#/dashboard";
-  } catch (e) { if (e.message !== "unauthenticated") alert(e.message); }
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    state.runDetails.set(id, data);
+    renderRunDetail(data);
+  } catch (error) {
+    renderRunDetail(null, error.message);
+  }
+}
+
+function renderRunDetail(run, errorMessage = "") {
+  const body = $("runDetailBody");
+  if (errorMessage) {
+    body.innerHTML = `<div class="banner banner-error">${escapeHtml(errorMessage)}</div>`;
+    return;
+  }
+  if (!run) {
+    body.innerHTML = `Pick a run to inspect its result summary here.`;
+    return;
+  }
+
+  if (run.kind === "simulation") {
+    const report = run.result || {};
+    body.innerHTML = `
+      <div class="detail-header">
+        <strong>${escapeHtml(run.product_name)}</strong>
+        <span class="chip tag-simulation">Simulation</span>
+      </div>
+      <p class="detail-copy">Created ${escapeHtml(formatDate(run.created_at))}</p>
+      <div class="detail-metrics">
+        <article><span>Adoption</span><strong>${pct(report.adoption_rate)}</strong></article>
+        <article><span>Switched</span><strong>${pct(report.switched_rate)}</strong></article>
+        <article><span>Viability</span><strong>${escapeHtml((report.viability_score || 0).toFixed(2))}</strong></article>
+      </div>
+      <div class="detail-actions">
+        <button type="button" id="openSelectedRun">Open on dashboard</button>
+      </div>`;
+  } else {
+    const result = run.result || {};
+    body.innerHTML = `
+      <div class="detail-header">
+        <strong>${escapeHtml(run.product_name)}</strong>
+        <span class="chip tag-challenge">Challenge</span>
+      </div>
+      <p class="detail-copy">Created ${escapeHtml(formatDate(run.created_at))}</p>
+      <div class="detail-metrics">
+        <article><span>Kill shots</span><strong>${(result.kill_shots || []).length}</strong></article>
+        <article><span>Assumptions</span><strong>${(result.assumption_challenges || []).length}</strong></article>
+        <article><span>Pricing risks</span><strong>${((result.pricing_risks || {}).concerns || []).length}</strong></article>
+      </div>
+      <p class="detail-copy">${escapeHtml(result.verdict || result.error || "No verdict recorded.")}</p>
+      <div class="detail-actions">
+        <button type="button" id="openSelectedRun">Open on dashboard</button>
+      </div>`;
+  }
+
+  $("openSelectedRun").addEventListener("click", () => restoreRun(run));
+}
+
+function restoreRun(run) {
+  if (run.kind === "simulation") {
+    renderSimulation(run.result, `Restored run: simulation #${run.id}`);
+  } else {
+    renderChallenge(run.result, `Restored run: challenge #${run.id}`);
+  }
+  window.location.hash = "#/dashboard";
 }
 
 function paramBar(label, range) {
-  const lo = (range[0] * 100).toFixed(0);
-  const hi = (range[1] * 100).toFixed(0);
-  const left = lo + "%";
-  const width = (hi - lo) + "%";
-  return `<div class="param-bar">
-    <span style="text-transform:capitalize">${escapeHtml(label.replace(/_/g, " "))}</span>
-    <div class="bar-track" title="${lo}–${hi}%">
-      <div class="bar-fill" style="left:${left};width:${width};"></div>
-    </div>
-  </div>`;
+  const low = Math.round(range[0] * 100);
+  const high = Math.round(range[1] * 100);
+  return `
+    <div class="param-bar">
+      <span>${escapeHtml(label.replace(/_/g, " "))}</span>
+      <div class="bar-track" title="${low}% to ${high}%">
+        <div class="bar-fill" style="left:${low}%; width:${Math.max(high - low, 4)}%;"></div>
+      </div>
+    </div>`;
 }
 
 async function loadAgents() {
   const personasEl = $("agentsPersonas");
   const criticEl = $("agentsCritic");
-  personasEl.innerHTML = `<div class="empty">Loading…</div>`;
+
+  if (state.agents) {
+    renderAgents();
+    return;
+  }
+
+  personasEl.innerHTML = `<div class="detail-placeholder">Loading agents...</div>`;
   criticEl.innerHTML = "";
+
   try {
     const res = await apiFetch("/agents");
     const data = await res.json();
-    personasEl.innerHTML = "";
-    data.personas.forEach((p) => {
-      const card = document.createElement("div");
-      card.className = "card agent-card";
-      const initial = p.name[0].toUpperCase();
-      const bars = Object.entries(p.params).map(([k, v]) => paramBar(k, v)).join("");
-      card.innerHTML = `
-        <div class="agent-name"><span class="agent-icon">${initial}</span><span>${escapeHtml(p.name)}</span></div>
-        <p class="agent-blurb">${escapeHtml(p.blurb)}</p>
-        <div class="param-bars">${bars}</div>`;
-      personasEl.appendChild(card);
-    });
-
-    const c = data.critic;
-    const critic = document.createElement("div");
-    critic.className = "card agent-card critic";
-    const status = c.ready
-      ? `<span class="chip sev-low">Ready</span>`
-      : `<span class="chip sev-med">Needs API key</span>`;
-    critic.innerHTML = `
-      <div class="agent-name"><span class="agent-icon">!</span><span>${escapeHtml(c.name)}</span></div>
-      <p class="agent-blurb">${escapeHtml(c.blurb)}</p>
-      <div style="margin-top:0.5rem;font-size:0.8rem;color:var(--muted);">
-        <span class="chip">${escapeHtml(c.model)}</span> ${status}
-      </div>`;
-    criticEl.appendChild(critic);
-  } catch (e) {
-    if (e.message !== "unauthenticated") personasEl.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+    state.agents = data;
+    renderAgents();
+  } catch (error) {
+    personasEl.innerHTML = `<div class="banner banner-error">${escapeHtml(error.message)}</div>`;
   }
 }
 
-function loadSettings() {
-  $("settingsEmail").textContent = ME.email || "—";
-  $("settingsChallengerStatus").textContent = ME.challenger_ready ? "Ready" : "Disabled";
-  $("settingsKeyStatus").textContent = ME.challenger_ready ? "Set in environment" : "Not set";
+function renderAgents() {
+  const personasEl = $("agentsPersonas");
+  const criticEl = $("agentsCritic");
+  const data = state.agents || { personas: [], critic: null };
+
+  personasEl.innerHTML = "";
+  data.personas.forEach((persona) => {
+    const card = document.createElement("article");
+    card.className = "card agent-card";
+    const bars = Object.entries(persona.params || {})
+      .map(([label, range]) => paramBar(label, range))
+      .join("");
+    card.innerHTML = `
+      <div class="agent-head">
+        <span class="agent-icon">${escapeHtml(persona.name[0].toUpperCase())}</span>
+        <div>
+          <p class="card-title caps">${escapeHtml(persona.name)}</p>
+          <p class="card-sub">${escapeHtml(persona.blurb)}</p>
+        </div>
+      </div>
+      <div class="param-bars">${bars}</div>`;
+    personasEl.appendChild(card);
+  });
+
+  criticEl.innerHTML = "";
+  const critic = data.critic;
+  if (!critic) return;
+
+  const criticCard = document.createElement("article");
+  criticCard.className = "card agent-card critic-card";
+  criticCard.innerHTML = `
+    <div class="agent-head">
+      <span class="agent-icon critic">!</span>
+      <div>
+        <p class="card-title">${escapeHtml(critic.name)}</p>
+        <p class="card-sub">${escapeHtml(critic.blurb)}</p>
+      </div>
+    </div>
+    <div class="critic-meta">
+      <span class="chip">${escapeHtml(critic.model)}</span>
+      <span class="chip ${critic.ready ? "sev-low" : "sev-med"}">${critic.ready ? "Ready" : "Needs API key"}</span>
+    </div>`;
+  criticEl.appendChild(criticCard);
 }
 
-/* -------- auth + nav -------- */
+function loadSettings() {
+  $("settingsEmail").textContent = state.me.email || "—";
+  $("settingsProductsCount").textContent = String(state.collections.specs.length);
+  $("settingsRunsCount").textContent = String(state.collections.runs.length);
+  $("settingsChallengerStatus").textContent = state.me.challengerReady ? "Ready" : "Disabled";
+  $("settingsKeyStatus").textContent = state.me.challengerReady ? "Configured" : "Not set";
+  $("settingsProfile").textContent = `${clampNumber($("personas").value, 100, 5, 2000)} personas / ${clampNumber($("days").value, 30, 1, 120)} days`;
+}
+
+function updateGlobalCounts() {
+  $("heroSavedProducts").textContent = String(state.collections.specs.length);
+  $("heroRuns").textContent = String(state.collections.runs.length);
+  $("heroChallenger").textContent = state.me.challengerReady ? "Ready" : "Offline";
+  loadSettings();
+}
 
 function setApiStatus() {
   const el = $("apiStatus");
-  if (ME.challenger_ready) {
-    el.className = "api-status ready";
-    el.textContent = "Challenger: ready";
+  if (state.me.challengerReady) {
+    el.className = "status-pill ready";
+    el.textContent = "Challenger online";
   } else {
-    el.className = "api-status off";
-    el.textContent = "Challenger: off";
+    el.className = "status-pill";
+    el.textContent = "Challenger offline";
   }
 }
 
 async function checkAuth() {
   try {
     const res = await fetch("/auth/me");
-    if (res.status === 401) { window.location.href = "/login"; return false; }
+    if (res.status === 401) {
+      window.location.href = "/login";
+      return false;
+    }
     const data = await res.json();
-    ME.email = data.email;
-    ME.challenger_ready = !!data.challenger_ready;
+    state.me.email = data.email;
+    state.me.challengerReady = Boolean(data.challenger_ready);
     $("userEmail").textContent = data.email;
-    $("avatarInitial").textContent = (data.email || "?")[0];
+    $("avatarInitial").textContent = (data.email || "?").slice(0, 1).toUpperCase();
     setApiStatus();
+    updateGlobalCounts();
     return true;
-  } catch (e) {
+  } catch (error) {
     window.location.href = "/login";
     return false;
   }
@@ -525,18 +1100,24 @@ function openUserMenu() {
   $("userDropdown").hidden = false;
   $("userAvatar").setAttribute("aria-expanded", "true");
 }
+
 function closeUserMenu() {
   $("userDropdown").hidden = true;
   $("userAvatar").setAttribute("aria-expanded", "false");
 }
-function toggleUserMenu(e) {
-  e.stopPropagation();
+
+function toggleUserMenu(event) {
+  event.stopPropagation();
   if ($("userDropdown").hidden) openUserMenu();
   else closeUserMenu();
 }
 
 async function logout() {
-  try { await fetch("/auth/logout", { method: "POST" }); } catch (e) { /* ignore */ }
+  try {
+    await fetch("/auth/logout", { method: "POST" });
+  } catch (_) {
+    // Intentionally ignore logout transport errors and send the user back to login.
+  }
   window.location.href = "/login";
 }
 
@@ -547,9 +1128,11 @@ function getRoute() {
 
 function setActiveRoute() {
   const route = getRoute();
-  $$(".view").forEach((v) => { v.hidden = v.dataset.view !== route; });
-  $$(".nav-tabs a").forEach((a) => {
-    a.classList.toggle("active", a.dataset.route === route);
+  $$(".view").forEach((view) => {
+    view.hidden = view.dataset.view !== route;
+  });
+  $$(".nav-tabs a").forEach((link) => {
+    link.classList.toggle("active", link.dataset.route === route);
   });
   if (route === "dashboard" && !DASHBOARD_HAS_RESULT) $("dashboardEmpty").hidden = false;
   if (route === "products") loadProducts();
@@ -558,27 +1141,83 @@ function setActiveRoute() {
   if (route === "settings") loadSettings();
 }
 
-/* -------- bootstrap -------- */
+function syncDraftPreview() {
+  renderDraftPreview();
+}
+
+function bindFilterChips() {
+  $$("#runFilters .filter-chip").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.runFilter = button.dataset.kind || "all";
+      $$("#runFilters .filter-chip").forEach((chip) => {
+        chip.classList.toggle("active", chip === button);
+      });
+      state.selectedRunId = null;
+      renderRuns();
+    });
+  });
+}
+
+function bindDialogControls() {
+  $("saveDialogForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = $("saveSpecName").value.trim();
+    if (!name) {
+      $("saveDialogError").hidden = false;
+      $("saveDialogError").textContent = "Please give this saved product a name.";
+      return;
+    }
+    await saveProduct(name);
+  });
+
+  $("saveDialogClose").addEventListener("click", () => closeDialog($("saveDialog")));
+  $("saveDialogCancel").addEventListener("click", () => closeDialog($("saveDialog")));
+
+  $("confirmClose").addEventListener("click", () => resolveConfirmation(false));
+  $("confirmCancel").addEventListener("click", () => resolveConfirmation(false));
+  $("confirmApprove").addEventListener("click", () => resolveConfirmation(true));
+
+  $("confirmDialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    resolveConfirmation(false);
+  });
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
-  $("run").addEventListener("click", run);
-  $("challenge").addEventListener("click", challenge);
-  $("loadFixture").addEventListener("click", loadFixture);
-  $("saveSpec").addEventListener("click", saveSpec);
+  $("run").addEventListener("click", runSimulation);
+  $("challenge").addEventListener("click", challengePitch);
+  $("loadFixture").addEventListener("click", () => loadFixture());
+  $("saveSpec").addEventListener("click", openSaveDialog);
   $("logout").addEventListener("click", logout);
   $("settingsLogout").addEventListener("click", logout);
   $("userAvatar").addEventListener("click", toggleUserMenu);
-  document.addEventListener("click", (e) => {
-    if (!$("userMenu").contains(e.target)) closeUserMenu();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeUserMenu();
+
+  bindFilterChips();
+  bindDialogControls();
+
+  ["name", "category", "price", "segment", "features", "substitutes", "pitch", "personas", "days", "seed"].forEach((id) => {
+    $(id).addEventListener("input", syncDraftPreview);
   });
 
-  window.addEventListener("hashchange", () => { closeUserMenu(); setActiveRoute(); });
+  document.addEventListener("click", (event) => {
+    if (!$("userMenu").contains(event.target)) closeUserMenu();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeUserMenu();
+  });
+
+  window.addEventListener("hashchange", () => {
+    closeUserMenu();
+    setActiveRoute();
+  });
 
   if (!(await checkAuth())) return;
+
+  await Promise.all([refreshSpecs({ silent: true }), refreshRuns({ silent: true })]);
+  if (!$("name").value.trim()) await loadFixture({ silent: true });
+  syncDraftPreview();
+
   if (!window.location.hash) window.location.hash = "#/dashboard";
-  loadFixture();
   setActiveRoute();
 });

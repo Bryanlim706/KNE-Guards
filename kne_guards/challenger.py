@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from .models import ProductSpec
 
 MODEL_DEFAULT = "gpt-4o"
@@ -24,139 +26,139 @@ Ground rules:
 EMIT_CRITIQUE_TOOL = {
     "type": "function",
     "function": {
-    "name": "emit_critique",
-    "description": "Emit the structured adversarial critique of the product pitch.",
-    "parameters": {
-        "type": "object",
-        "required": [
-            "verdict",
-            "assumption_challenges",
-            "feature_critiques",
-            "substitute_risks",
-            "segment_coherence",
-            "pricing_risks",
-            "kill_shots",
-            "steelman",
-            "mechanism_scores",
-            "product_strategy",
-        ],
-        "properties": {
-            "verdict": {
-                "type": "string",
-                "description": "One-paragraph skeptical overall assessment of the pitch.",
-            },
-            "assumption_challenges": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["claim", "pushback", "severity"],
-                    "properties": {
-                        "claim": {
-                            "type": "string",
-                            "description": "An implicit assumption the spec or pitch is making.",
+        "name": "emit_critique",
+        "description": "Emit the structured adversarial critique of the product pitch.",
+        "parameters": {
+            "type": "object",
+            "required": [
+                "verdict",
+                "assumption_challenges",
+                "feature_critiques",
+                "substitute_risks",
+                "segment_coherence",
+                "pricing_risks",
+                "kill_shots",
+                "steelman",
+                "mechanism_scores",
+                "product_strategy",
+            ],
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "description": "One-paragraph skeptical overall assessment of the pitch.",
+                },
+                "assumption_challenges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["claim", "pushback", "severity"],
+                        "properties": {
+                            "claim": {
+                                "type": "string",
+                                "description": "An implicit assumption the spec or pitch is making.",
+                            },
+                            "pushback": {
+                                "type": "string",
+                                "description": "Concrete reason that assumption may not hold.",
+                            },
+                            "severity": {"type": "string", "enum": ["low", "med", "high"]},
                         },
-                        "pushback": {
-                            "type": "string",
-                            "description": "Concrete reason that assumption may not hold.",
+                    },
+                },
+                "feature_critiques": {
+                    "type": "array",
+                    "description": "Exactly one entry per feature in the spec, in the same order.",
+                    "items": {
+                        "type": "object",
+                        "required": ["feature", "critique"],
+                        "properties": {
+                            "feature": {"type": "string"},
+                            "critique": {"type": "string"},
                         },
-                        "severity": {"type": "string", "enum": ["low", "med", "high"]},
                     },
                 },
-            },
-            "feature_critiques": {
-                "type": "array",
-                "description": "Exactly one entry per feature in the spec, in the same order.",
-                "items": {
+                "substitute_risks": {
+                    "type": "array",
+                    "description": "Exactly one entry per listed substitute, in the same order.",
+                    "items": {
+                        "type": "object",
+                        "required": ["substitute", "why_it_wins"],
+                        "properties": {
+                            "substitute": {"type": "string"},
+                            "why_it_wins": {"type": "string"},
+                        },
+                    },
+                },
+                "segment_coherence": {
                     "type": "object",
-                    "required": ["feature", "critique"],
+                    "required": ["assessment", "concerns"],
                     "properties": {
-                        "feature": {"type": "string"},
-                        "critique": {"type": "string"},
+                        "assessment": {"type": "string"},
+                        "concerns": {"type": "array", "items": {"type": "string"}},
                     },
                 },
-            },
-            "substitute_risks": {
-                "type": "array",
-                "description": "Exactly one entry per listed substitute, in the same order.",
-                "items": {
+                "pricing_risks": {
                     "type": "object",
-                    "required": ["substitute", "why_it_wins"],
+                    "required": ["assessment", "concerns"],
                     "properties": {
-                        "substitute": {"type": "string"},
-                        "why_it_wins": {"type": "string"},
+                        "assessment": {"type": "string"},
+                        "concerns": {"type": "array", "items": {"type": "string"}},
                     },
                 },
-            },
-            "segment_coherence": {
-                "type": "object",
-                "required": ["assessment", "concerns"],
-                "properties": {
-                    "assessment": {"type": "string"},
-                    "concerns": {"type": "array", "items": {"type": "string"}},
+                "kill_shots": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "Top 2-3 risks that could sink the product.",
+                    "items": {
+                        "type": "object",
+                        "required": ["risk", "why_it_kills"],
+                        "properties": {
+                            "risk": {"type": "string"},
+                            "why_it_kills": {"type": "string"},
+                        },
+                    },
                 },
-            },
-            "pricing_risks": {
-                "type": "object",
-                "required": ["assessment", "concerns"],
-                "properties": {
-                    "assessment": {"type": "string"},
-                    "concerns": {"type": "array", "items": {"type": "string"}},
+                "steelman": {
+                    "type": "string",
+                    "description": "Strongest positive case for the idea, in one paragraph.",
                 },
-            },
-            "kill_shots": {
-                "type": "array",
-                "minItems": 1,
-                "description": "Top 2-3 risks that could sink the product.",
-                "items": {
+                "mechanism_scores": {
                     "type": "object",
-                    "required": ["risk", "why_it_kills"],
+                    "description": (
+                        "Your analytical assessment of the product's lifecycle mechanism strengths. "
+                        "Score each dimension 0.0–1.0 based on the spec and pitch. "
+                        "Be honest — most early-stage products score 0.3–0.6 on most dimensions. "
+                        "R: how strongly does this replace an existing behavior? "
+                        "U: how often does the product give users a reason to return? "
+                        "W: how deeply embedded is this in existing workflows? "
+                        "F: how strong is organic non-viral discovery/inflow? "
+                        "M: how likely are users to actively recommend this to peers?"
+                    ),
+                    "required": ["R", "U", "W", "F", "M"],
                     "properties": {
-                        "risk": {"type": "string"},
-                        "why_it_kills": {"type": "string"},
+                        "R": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                        "U": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                        "W": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                        "F": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                        "M": {"type": "number", "minimum": 0.0, "maximum": 1.0},
                     },
                 },
-            },
-            "steelman": {
-                "type": "string",
-                "description": "Strongest positive case for the idea, in one paragraph.",
-            },
-            "mechanism_scores": {
-                "type": "object",
-                "description": (
-                    "Your analytical assessment of the product's lifecycle mechanism strengths. "
-                    "Score each dimension 0.0–1.0 based on the spec and pitch. "
-                    "Be honest — most early-stage products score 0.3–0.6 on most dimensions. "
-                    "R: how strongly does this replace an existing behavior? "
-                    "U: how often does the product give users a reason to return? "
-                    "W: how deeply embedded is this in existing workflows? "
-                    "F: how strong is organic non-viral discovery/inflow? "
-                    "M: how likely are users to actively recommend this to peers?"
-                ),
-                "required": ["R", "U", "W", "F", "M"],
-                "properties": {
-                    "R": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                    "U": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                    "W": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                    "F": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                    "M": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "product_strategy": {
+                    "type": "string",
+                    "enum": ["viral", "workflow", "content", "replacement", "discovery", "balanced"],
+                    "description": (
+                        "The dominant growth and retention strategy this product relies on. "
+                        "This determines which mechanism dimensions are load-bearing in the survivability model. "
+                        "viral: grows through peer sharing, M and F dominate. "
+                        "workflow: lives inside existing routines, W dominates. "
+                        "content: returns driven by fresh material, U dominates. "
+                        "replacement: displaces a specific existing tool, R dominates. "
+                        "discovery: found through organic channels, F dominates. "
+                        "balanced: no single dominant strategy — use only if genuinely unclear."
+                    ),
                 },
-            },
-            "product_strategy": {
-                "type": "string",
-                "enum": ["viral", "workflow", "content", "replacement", "discovery", "balanced"],
-                "description": (
-                    "The dominant growth and retention strategy this product relies on. "
-                    "This determines which mechanism dimensions are load-bearing in the survivability model. "
-                    "viral: grows through peer sharing, M and F dominate. "
-                    "workflow: lives inside existing routines, W dominates. "
-                    "content: returns driven by fresh material, U dominates. "
-                    "replacement: displaces a specific existing tool, R dominates. "
-                    "discovery: found through organic channels, F dominates. "
-                    "balanced: no single dominant strategy — use only if genuinely unclear."
-                ),
             },
         },
-    },
     },
 }
 
@@ -192,12 +194,10 @@ def challenge_pitch(
     model: str = MODEL_DEFAULT,
     client=None,
 ) -> dict:
-    import json
-
     if client is None:
-        import openai
+        from openai import OpenAI
 
-        client = openai.OpenAI()
+        client = OpenAI()
 
     response = client.chat.completions.create(
         model=model,
@@ -210,8 +210,10 @@ def challenge_pitch(
         ],
     )
 
-    message = response.choices[0].message
-    if message.tool_calls:
-        return json.loads(message.tool_calls[0].function.arguments)
+    for choice in response.choices:
+        if choice.message.tool_calls:
+            for tc in choice.message.tool_calls:
+                if tc.function.name == "emit_critique":
+                    return json.loads(tc.function.arguments)
 
-    raise RuntimeError("model did not return a tool call")
+    raise RuntimeError("model did not return a tool_use block")
