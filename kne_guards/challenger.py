@@ -1,10 +1,105 @@
 from __future__ import annotations
 
 import json
+import os
 
 from .models import ProductSpec
 
-MODEL_DEFAULT = "gpt-4o"
+OPENAI_MODEL_DEFAULT = "gpt-4o"
+ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-4-6"
+
+
+def _active_provider(client=None) -> str:
+    if client is not None:
+        module = type(client).__module__ or ""
+        return "anthropic" if "anthropic" in module else "openai"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    raise RuntimeError(
+        "No API key set. Add OPENAI_API_KEY or ANTHROPIC_API_KEY to .env."
+    )
+
+
+def is_ready() -> bool:
+    return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _model_default_for(provider: str) -> str:
+    return ANTHROPIC_MODEL_DEFAULT if provider == "anthropic" else OPENAI_MODEL_DEFAULT
+
+
+def _anthropic_tool(openai_tool: dict) -> dict:
+    fn = openai_tool["function"]
+    return {
+        "name": fn["name"],
+        "description": fn["description"],
+        "input_schema": fn["parameters"],
+    }
+
+
+def _run_tool(
+    *,
+    system_prompt: str,
+    user_message: str,
+    tool: dict,
+    model: str | None = None,
+    max_tokens: int = 4096,
+    client=None,
+) -> dict:
+    provider = _active_provider(client)
+    tool_name = tool["function"]["name"]
+    effective_model = model or _model_default_for(provider)
+
+    if provider == "anthropic":
+        if client is None:
+            import anthropic
+
+            client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=effective_model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            tools=[_anthropic_tool(tool)],
+            tool_choice={"type": "tool", "name": tool_name},
+            messages=[{"role": "user", "content": user_message}],
+        )
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
+                return block.input
+        raise RuntimeError("model did not return a tool_use block")
+
+    if client is None:
+        from openai import OpenAI
+
+        client = OpenAI()
+    response = client.chat.completions.create(
+        model=effective_model,
+        max_tokens=max_tokens,
+        tools=[tool],
+        tool_choice={"type": "function", "function": {"name": tool_name}},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+    )
+    for choice in response.choices:
+        if choice.message.tool_calls:
+            for tc in choice.message.tool_calls:
+                if tc.function.name == tool_name:
+                    return json.loads(tc.function.arguments)
+    raise RuntimeError("model did not return a tool_use block")
+
+
+def _initial_default_model() -> str:
+    try:
+        return _model_default_for(_active_provider())
+    except RuntimeError:
+        return OPENAI_MODEL_DEFAULT
+
+
+MODEL_DEFAULT = _initial_default_model()
 
 SYSTEM_PROMPT = """You are a skeptical product critic and seed-stage investor evaluating a founder's pitch for a consumer product aimed at students. Your job is to CHALLENGE the pitch, not cheer for it.
 
@@ -61,7 +156,10 @@ EMIT_CRITIQUE_TOOL = {
                                 "type": "string",
                                 "description": "Concrete reason that assumption may not hold.",
                             },
-                            "severity": {"type": "string", "enum": ["low", "med", "high"]},
+                            "severity": {
+                                "type": "string",
+                                "enum": ["low", "med", "high"],
+                            },
                         },
                     },
                 },
@@ -145,7 +243,14 @@ EMIT_CRITIQUE_TOOL = {
                 },
                 "product_strategy": {
                     "type": "string",
-                    "enum": ["viral", "workflow", "content", "replacement", "discovery", "balanced"],
+                    "enum": [
+                        "viral",
+                        "workflow",
+                        "content",
+                        "replacement",
+                        "discovery",
+                        "balanced",
+                    ],
                     "description": (
                         "The dominant growth and retention strategy this product relies on. "
                         "This determines which mechanism dimensions are load-bearing in the survivability model. "
@@ -277,60 +382,213 @@ def challenge_pitch(
     spec: ProductSpec,
     *,
     pitch_text: str | None = None,
-    model: str = MODEL_DEFAULT,
+    model: str | None = None,
     client=None,
 ) -> dict:
-    if client is None:
-        from openai import OpenAI
-        client = OpenAI()
-
-    response = client.chat.completions.create(
+    return _run_tool(
+        system_prompt=SYSTEM_PROMPT,
+        user_message=_format_spec(spec, pitch_text),
+        tool=EMIT_CRITIQUE_TOOL,
         model=model,
-        max_tokens=4096,
-        tools=[EMIT_CRITIQUE_TOOL],
-        tool_choice={"type": "function", "function": {"name": "emit_critique"}},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _format_spec(spec, pitch_text)},
-        ],
+        client=client,
     )
-
-    for choice in response.choices:
-        if choice.message.tool_calls:
-            for tc in choice.message.tool_calls:
-                if tc.function.name == "emit_critique":
-                    return json.loads(tc.function.arguments)
-
-    raise RuntimeError("model did not return a tool_use block")
 
 
 def improve_pitch_expression(
     spec: ProductSpec,
     *,
     pitch_text: str | None = None,
-    model: str = MODEL_DEFAULT,
+    model: str | None = None,
     client=None,
 ) -> dict:
-    if client is None:
-        from openai import OpenAI
-
-        client = OpenAI()
-
-    response = client.chat.completions.create(
+    return _run_tool(
+        system_prompt=EXPRESSION_SYSTEM_PROMPT,
+        user_message=_format_expression_prompt(spec, pitch_text),
+        tool=EMIT_EXPRESSION_TOOL,
         model=model,
-        max_tokens=4096,
-        tools=[EMIT_EXPRESSION_TOOL],
-        tool_choice={"type": "function", "function": {"name": "emit_expression_help"}},
-        messages=[
-            {"role": "system", "content": EXPRESSION_SYSTEM_PROMPT},
-            {"role": "user", "content": _format_expression_prompt(spec, pitch_text)},
-        ],
+        client=client,
     )
 
-    for choice in response.choices:
-        if choice.message.tool_calls:
-            for tc in choice.message.tool_calls:
-                if tc.function.name == "emit_expression_help":
-                    return json.loads(tc.function.arguments)
 
-    raise RuntimeError("model did not return a tool_use block")
+PERSONA_SYSTEM_PROMPT = """You are role-playing as a single synthetic student persona evaluating a product pitch. You are not a founder, not an investor, not a coach — you are a student in the target market reacting honestly, in your own voice.
+
+You will be told which archetype you are and the five parameter bands that define you:
+- attention_span: how long you stay focused on any one tool.
+- motivation: how willing you are to do work to get a result.
+- price_sensitivity: how much price friction blocks you.
+- novelty_bias: how much "new and shiny" pulls you in.
+- substitute_loyalty: how stuck you are on what you already use.
+
+Stay inside those bands. A low-attention-span burnout does not suddenly grind through a 20-step onboarding. A high-substitute-loyalty grinder does not drop Anki on a whim. A high-price-sensitivity budgeter does not shrug at $12/month.
+
+Ground rules:
+- Reference the spec by exact field values. "$8.99/month" not "the price". Name features and substitutes the founder actually listed.
+- Do not invent features, prices, segments, or competitors that are not in the spec. If the spec is thin, say the pitch was thin — do not fabricate.
+- No hype, no cheerleading, no fabricated traction or quotes.
+- biggest_hook.feature must be copied verbatim from the spec's features (or null if nothing fits you).
+- likely_substitute.name must be copied verbatim from the spec's substitutes (or null if none were listed).
+- biggest_objection.tied_to_param must be the single param that most drives your objection, from the five names above.
+- persona_fit_score is a 0.0–1.0 self-assessment of how well this product fits YOU specifically. Most products score 0.2–0.6 for most personas.
+- Your entire response must come through the emit_persona_reaction tool. Do not produce prose outside the tool call."""
+
+
+EMIT_PERSONA_REACTION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "emit_persona_reaction",
+        "description": "Emit this single persona's honest in-voice reaction to the pitch.",
+        "parameters": {
+            "type": "object",
+            "required": [
+                "verdict",
+                "first_reaction",
+                "biggest_hook",
+                "biggest_objection",
+                "what_would_get_me",
+                "likely_substitute",
+                "persona_fit_score",
+            ],
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["would_try", "skeptical", "pass", "wrong_fit"],
+                    "description": "Your overall stance on trying the product.",
+                },
+                "first_reaction": {
+                    "type": "string",
+                    "description": "One-to-two sentence gut reaction in your voice.",
+                },
+                "biggest_hook": {
+                    "type": "object",
+                    "required": ["feature", "why_it_lands"],
+                    "properties": {
+                        "feature": {
+                            "type": ["string", "null"],
+                            "description": "One feature from spec.features verbatim, or null if nothing fits you.",
+                        },
+                        "why_it_lands": {
+                            "type": "string",
+                            "description": "Why this matters to you given your param bands.",
+                        },
+                    },
+                },
+                "biggest_objection": {
+                    "type": "object",
+                    "required": ["issue", "tied_to_param", "why"],
+                    "properties": {
+                        "issue": {
+                            "type": "string",
+                            "description": "Concrete blocker in your voice.",
+                        },
+                        "tied_to_param": {
+                            "type": "string",
+                            "enum": [
+                                "attention_span",
+                                "motivation",
+                                "price_sensitivity",
+                                "novelty_bias",
+                                "substitute_loyalty",
+                            ],
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "Why this param makes the objection sharp for you.",
+                        },
+                    },
+                },
+                "what_would_get_me": {
+                    "type": "string",
+                    "description": "Concrete change to features/price/segment that would flip you to would_try.",
+                },
+                "likely_substitute": {
+                    "type": "object",
+                    "required": ["name", "why_it_wins"],
+                    "properties": {
+                        "name": {
+                            "type": ["string", "null"],
+                            "description": "One substitute from spec.substitutes verbatim, or null if none listed or none applies.",
+                        },
+                        "why_it_wins": {
+                            "type": ["string", "null"],
+                            "description": "Why you would stay with it, or null if not applicable.",
+                        },
+                    },
+                },
+                "persona_fit_score": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "0.0–1.0 self-assessment of product fit. Most products score 0.2–0.6.",
+                },
+            },
+        },
+    },
+}
+
+
+def _format_persona_prompt(
+    spec: ProductSpec,
+    *,
+    archetype: str,
+    bands: dict,
+    blurb: str,
+    pitch_text: str | None,
+) -> str:
+    band_lines = []
+    for key in (
+        "attention_span",
+        "motivation",
+        "price_sensitivity",
+        "novelty_bias",
+        "substitute_loyalty",
+    ):
+        band = bands.get(key)
+        if isinstance(band, (list, tuple)) and len(band) == 2:
+            band_lines.append(f"    {key}: {band[0]:.2f}–{band[1]:.2f}")
+        else:
+            band_lines.append(f"    {key}: {band}")
+    who = [
+        "Who you are:",
+        f"  Archetype: {archetype}",
+        f"  Blurb: {blurb}",
+        "  Param bands:",
+        *band_lines,
+    ]
+    return _format_spec(spec, pitch_text) + "\n\n" + "\n".join(who)
+
+
+def react_as_persona(
+    spec: ProductSpec,
+    *,
+    archetype: str,
+    bands: dict,
+    blurb: str,
+    pitch_text: str | None = None,
+    model: str | None = None,
+    client=None,
+) -> dict:
+    reaction = _run_tool(
+        system_prompt=PERSONA_SYSTEM_PROMPT,
+        user_message=_format_persona_prompt(
+            spec,
+            archetype=archetype,
+            bands=bands,
+            blurb=blurb,
+            pitch_text=pitch_text,
+        ),
+        tool=EMIT_PERSONA_REACTION_TOOL,
+        model=model,
+        max_tokens=2048,
+        client=client,
+    )
+    hook = reaction.get("biggest_hook") or {}
+    if hook.get("feature") and hook["feature"] not in spec.features:
+        hook["feature"] = None
+    reaction["biggest_hook"] = hook
+    sub = reaction.get("likely_substitute") or {}
+    if sub.get("name") and sub["name"] not in spec.substitutes:
+        sub["name"] = None
+        sub["why_it_wins"] = None
+    reaction["likely_substitute"] = sub
+    reaction["archetype"] = archetype
+    return reaction

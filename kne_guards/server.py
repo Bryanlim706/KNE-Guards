@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 import os
-from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import auth, db
-from .challenger import MODEL_DEFAULT, challenge_pitch, improve_pitch_expression
+from .challenger import (
+    MODEL_DEFAULT,
+    challenge_pitch,
+    improve_pitch_expression,
+    is_ready,
+    react_as_persona,
+)
 from .models import ProductSpec
 from .personas import ARCHETYPES, generate_personas
 from .simulation import run_simulation
@@ -25,22 +30,10 @@ ARCHETYPE_BLURBS = {
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
-SESSION_COOKIE = "session"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
-SESSION_COOKIE_SET = f"{SESSION_COOKIE}={{token}}; HttpOnly; SameSite=Lax; Path=/; Max-Age={COOKIE_MAX_AGE}"
-SESSION_COOKIE_CLEAR = f"{SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
-
-
-def _load_stored_json(raw: str, *, label: str, row_id: int) -> dict | list | None:
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        print(f"warning: invalid {label} JSON in row {row_id}")
-        return None
-
 
 def _parse_spec(spec_dict: dict) -> ProductSpec:
     from .models import MechanismScores
+
     mechanisms = None
     m_raw = spec_dict.get("mechanisms")
     if m_raw is not None:
@@ -90,40 +83,29 @@ def _run_simulation(spec: ProductSpec, personas: int, days: int, seed: int) -> d
 
 
 def _save_run(
-    user_id: int, kind: str, product_name: str, spec_id: int | None, result: dict
+    user_id: str, kind: str, product_name: str, spec_id: int | None, result: dict
 ) -> int:
-    conn = db.get_connection()
-    try:
-        cur = conn.execute(
+    with db.get_connection() as conn:
+        row = conn.execute(
             """
             INSERT INTO saved_runs (user_id, spec_id, kind, product_name, result_json)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (user_id, spec_id, kind, product_name, json.dumps(result)),
-        )
-        conn.commit()
-        return cur.lastrowid
-    finally:
-        conn.close()
+        ).fetchone()
+        return row["id"]
 
 
 class Handler(BaseHTTPRequestHandler):
     # ---------- response helpers ----------
 
-    def _send_json(
-        self,
-        status: int,
-        payload: dict,
-        *,
-        extra_headers: list[tuple[str, str]] | None = None,
-    ) -> None:
+    def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        for key, value in extra_headers or []:
-            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -149,19 +131,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": f"invalid json: {e}"})
             return None
 
-    # ---------- session helpers ----------
+    # ---------- auth helpers ----------
 
-    def _session_token(self) -> str | None:
-        header = self.headers.get("Cookie", "")
-        if not header:
+    def _bearer_token(self) -> str | None:
+        header = self.headers.get("Authorization", "")
+        if not header.lower().startswith("bearer "):
             return None
-        jar = SimpleCookie(header)
-        if SESSION_COOKIE not in jar:
-            return None
-        return jar[SESSION_COOKIE].value or None
+        return header[7:].strip() or None
 
     def _current_user(self) -> dict | None:
-        return auth.get_user_from_token(self._session_token())
+        return auth.user_from_bearer(self._bearer_token())
 
     def _require_auth(self) -> dict | None:
         user = self._current_user()
@@ -193,6 +172,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/fixture":
             return self._send_file(FIXTURES_DIR / "flashcards.json", "application/json")
 
+        if path == "/config":
+            return self._send_json(
+                200,
+                {
+                    "supabase_url": os.environ.get("SUPABASE_URL", ""),
+                    "supabase_anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+                },
+            )
+
         if path == "/auth/me":
             user = self._current_user()
             if user is None:
@@ -201,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "email": user["email"],
-                    "challenger_ready": bool(os.environ.get("OPENAI_API_KEY")),
+                    "challenger_ready": is_ready(),
                 },
             )
 
@@ -221,9 +209,18 @@ class Handler(BaseHTTPRequestHandler):
                 "name": "Pitch Challenger",
                 "blurb": "Skeptical investor that adversarially critiques your pitch before the simulation runs. Surfaces kill-shots, weak features, pricing risks, and fragile assumptions.",
                 "model": MODEL_DEFAULT,
-                "ready": bool(os.environ.get("OPENAI_API_KEY")),
+                "ready": is_ready(),
             }
-            return self._send_json(200, {"personas": personas, "critic": critic})
+            expression = {
+                "name": "Expression Helper",
+                "blurb": "Rewrites your draft pitch into sharper founder-ready language without fabricating features, metrics, or traction.",
+                "model": MODEL_DEFAULT,
+                "ready": is_ready(),
+            }
+            return self._send_json(
+                200,
+                {"personas": personas, "critic": critic, "expression": expression},
+            )
 
         if path == "/specs":
             user = self._require_auth()
@@ -257,13 +254,6 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return
 
-        if path == "/auth/signup":
-            return self._auth_signup(body)
-        if path == "/auth/login":
-            return self._auth_login(body)
-        if path == "/auth/logout":
-            return self._auth_logout()
-
         if path == "/simulate":
             user = self._require_auth()
             if user is None:
@@ -281,6 +271,12 @@ class Handler(BaseHTTPRequestHandler):
             if user is None:
                 return
             return self._express_idea(user["id"], body)
+
+        if path == "/agents/react":
+            user = self._require_auth()
+            if user is None:
+                return
+            return self._persona_react(user["id"], body)
 
         if path == "/specs":
             user = self._require_auth()
@@ -305,43 +301,9 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_error(404, "Not found")
 
-    # ---------- auth routes ----------
-
-    def _auth_signup(self, body: dict) -> None:
-        email = str(body.get("email", "")).strip()
-        password = str(body.get("password", ""))
-        try:
-            token = auth.signup(email, password)
-        except auth.AuthError as exc:
-            return self._send_json(400, {"error": str(exc)})
-        self._send_json(
-            200,
-            {"email": email.lower()},
-            extra_headers=[("Set-Cookie", SESSION_COOKIE_SET.format(token=token))],
-        )
-
-    def _auth_login(self, body: dict) -> None:
-        email = str(body.get("email", ""))
-        password = str(body.get("password", ""))
-        try:
-            token = auth.login(email, password)
-        except auth.AuthError as exc:
-            return self._send_json(401, {"error": str(exc)})
-        self._send_json(
-            200,
-            {"email": email.strip().lower()},
-            extra_headers=[("Set-Cookie", SESSION_COOKIE_SET.format(token=token))],
-        )
-
-    def _auth_logout(self) -> None:
-        auth.logout(self._session_token())
-        self._send_json(
-            200, {"ok": True}, extra_headers=[("Set-Cookie", SESSION_COOKIE_CLEAR)]
-        )
-
     # ---------- simulate / challenge ----------
 
-    def _simulate(self, user_id: int, body: dict) -> None:
+    def _simulate(self, user_id: str, body: dict) -> None:
         try:
             spec_dict = dict(body["spec"])
             # Accept mechanism scores + strategy from a prior challenge run
@@ -363,14 +325,19 @@ class Handler(BaseHTTPRequestHandler):
         report["_run_id"] = run_id
         self._send_json(200, report)
 
-    def _challenge(self, user_id: int, body: dict) -> None:
+    def _challenge(self, user_id: str, body: dict) -> None:
         try:
             spec = _parse_spec(body["spec"])
         except (KeyError, ValueError, TypeError) as exc:
             return self._send_json(400, {"error": f"invalid spec: {exc}"})
 
-        if not os.environ.get("OPENAI_API_KEY"):
-            return self._send_json(200, {"error": "OPENAI_API_KEY not set"})
+        if not is_ready():
+            return self._send_json(
+                200,
+                {
+                    "error": "No AI provider key set. Add OPENAI_API_KEY or ANTHROPIC_API_KEY to .env."
+                },
+            )
 
         try:
             critique = challenge_pitch(
@@ -385,14 +352,19 @@ class Handler(BaseHTTPRequestHandler):
         critique["_run_id"] = run_id
         self._send_json(200, critique)
 
-    def _express_idea(self, user_id: int, body: dict) -> None:
+    def _express_idea(self, user_id: str, body: dict) -> None:
         try:
             spec = _parse_spec(body["spec"])
         except (KeyError, ValueError, TypeError) as exc:
             return self._send_json(400, {"error": f"invalid spec: {exc}"})
 
-        if not os.environ.get("OPENAI_API_KEY"):
-            return self._send_json(200, {"error": "OPENAI_API_KEY not set"})
+        if not is_ready():
+            return self._send_json(
+                200,
+                {
+                    "error": "No AI provider key set. Add OPENAI_API_KEY or ANTHROPIC_API_KEY to .env."
+                },
+            )
 
         try:
             expression = improve_pitch_expression(
@@ -405,79 +377,96 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send_json(200, expression)
 
+    def _persona_react(self, user_id: str, body: dict) -> None:
+        archetype = body.get("archetype")
+        if archetype not in ARCHETYPES:
+            return self._send_json(400, {"error": "unknown archetype"})
+
+        try:
+            spec = _parse_spec(body["spec"])
+        except (KeyError, ValueError, TypeError) as exc:
+            return self._send_json(400, {"error": f"invalid spec: {exc}"})
+
+        if not is_ready():
+            return self._send_json(
+                200,
+                {
+                    "error": "No AI provider key set. Add OPENAI_API_KEY or ANTHROPIC_API_KEY to .env."
+                },
+            )
+
+        try:
+            reaction = react_as_persona(
+                spec,
+                archetype=archetype,
+                bands=ARCHETYPES[archetype],
+                blurb=ARCHETYPE_BLURBS.get(archetype, ""),
+                pitch_text=body.get("pitch_text") or None,
+                model=body.get("model") or MODEL_DEFAULT,
+            )
+        except Exception as exc:
+            return self._send_json(200, {"error": str(exc)})
+
+        self._send_json(200, reaction)
+
     # ---------- specs CRUD ----------
 
-    def _list_specs(self, user_id: int) -> None:
-        conn = db.get_connection()
-        try:
+    def _list_specs(self, user_id: str) -> None:
+        with db.get_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT id, name, spec_json, created_at
                 FROM saved_specs
-                WHERE user_id = ?
+                WHERE user_id = %s
                 ORDER BY created_at DESC
                 """,
                 (user_id,),
             ).fetchall()
-        finally:
-            conn.close()
-        specs = []
-        for row in rows:
-            spec = _load_stored_json(
-                row["spec_json"], label="saved spec", row_id=row["id"]
-            )
-            if spec is None:
-                continue
-            specs.append(
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "spec": spec,
-                    "created_at": row["created_at"],
-                }
-            )
-        self._send_json(
-            200,
-            {"specs": specs},
-        )
+        specs = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "spec": row["spec_json"],
+                "created_at": row["created_at"].isoformat(),
+            }
+            for row in rows
+        ]
+        self._send_json(200, {"specs": specs})
 
-    def _save_spec(self, user_id: int, body: dict) -> None:
+    def _save_spec(self, user_id: str, body: dict) -> None:
         name = str(body.get("name", "")).strip()
         spec = body.get("spec")
         if not name or not isinstance(spec, dict):
             return self._send_json(400, {"error": "name and spec required"})
-        # Validate spec shape before saving so we don't persist garbage.
         try:
             _parse_spec(spec)
         except (KeyError, ValueError, TypeError) as exc:
             return self._send_json(400, {"error": f"invalid spec: {exc}"})
 
-        conn = db.get_connection()
-        try:
-            cur = conn.execute(
-                "INSERT INTO saved_specs (user_id, name, spec_json) VALUES (?, ?, ?)",
+        with db.get_connection() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO saved_specs (user_id, name, spec_json)
+                VALUES (%s, %s, %s)
+                RETURNING id
+                """,
                 (user_id, name, json.dumps(spec)),
-            )
-            conn.commit()
-            spec_id = cur.lastrowid
-        finally:
-            conn.close()
-        self._send_json(200, {"id": spec_id})
+            ).fetchone()
+        self._send_json(200, {"id": row["id"]})
 
     # ---------- runs CRUD ----------
 
-    def _list_runs(self, user_id: int, *, limit: int, kind: str | None) -> None:
+    def _list_runs(self, user_id: str, *, limit: int, kind: str | None) -> None:
         limit = max(1, min(limit, 200))
-        conn = db.get_connection()
-        try:
+        with db.get_connection() as conn:
             if kind:
                 rows = conn.execute(
                     """
                     SELECT id, kind, product_name, created_at
                     FROM saved_runs
-                    WHERE user_id = ? AND kind = ?
+                    WHERE user_id = %s AND kind = %s
                     ORDER BY created_at DESC
-                    LIMIT ?
+                    LIMIT %s
                     """,
                     (user_id, kind, limit),
                 ).fetchall()
@@ -486,14 +475,12 @@ class Handler(BaseHTTPRequestHandler):
                     """
                     SELECT id, kind, product_name, created_at
                     FROM saved_runs
-                    WHERE user_id = ?
+                    WHERE user_id = %s
                     ORDER BY created_at DESC
-                    LIMIT ?
+                    LIMIT %s
                     """,
                     (user_id, limit),
                 ).fetchall()
-        finally:
-            conn.close()
         self._send_json(
             200,
             {
@@ -502,63 +489,53 @@ class Handler(BaseHTTPRequestHandler):
                         "id": r["id"],
                         "kind": r["kind"],
                         "product_name": r["product_name"],
-                        "created_at": r["created_at"],
+                        "created_at": r["created_at"].isoformat(),
                     }
                     for r in rows
                 ]
             },
         )
 
-    def _get_run(self, user_id: int, run_id_raw: str) -> None:
+    def _get_run(self, user_id: str, run_id_raw: str) -> None:
         try:
             run_id = int(run_id_raw)
         except ValueError:
             return self._send_json(404, {"error": "not found"})
-        conn = db.get_connection()
-        try:
+        with db.get_connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, kind, product_name, result_json, created_at
                 FROM saved_runs
-                WHERE id = ? AND user_id = ?
+                WHERE id = %s AND user_id = %s
                 """,
                 (run_id, user_id),
             ).fetchone()
-        finally:
-            conn.close()
         if row is None:
             return self._send_json(404, {"error": "not found"})
-        result = _load_stored_json(
-            row["result_json"], label="saved run", row_id=row["id"]
-        )
-        if result is None:
-            return self._send_json(500, {"error": "stored run is corrupted"})
         self._send_json(
             200,
             {
                 "id": row["id"],
                 "kind": row["kind"],
                 "product_name": row["product_name"],
-                "result": result,
-                "created_at": row["created_at"],
+                "result": row["result_json"],
+                "created_at": row["created_at"].isoformat(),
             },
         )
 
-    def _delete_owned(self, user_id: int, table: str, id_raw: str) -> None:
+    def _delete_owned(self, user_id: str, table: str, id_raw: str) -> None:
         try:
             row_id = int(id_raw)
         except ValueError:
             return self._send_json(404, {"error": "not found"})
         # Table is hardcoded in the caller, not user-supplied.
-        conn = db.get_connection()
-        try:
+        with db.get_connection() as conn:
             cur = conn.execute(
-                f"DELETE FROM {table} WHERE id = ? AND user_id = ?", (row_id, user_id)
+                f"DELETE FROM {table} WHERE id = %s AND user_id = %s",
+                (row_id, user_id),
             )
-            conn.commit()
-        finally:
-            conn.close()
-        if cur.rowcount == 0:
+            rowcount = cur.rowcount
+        if rowcount == 0:
             return self._send_json(404, {"error": "not found"})
         self._send_json(200, {"ok": True})
 
@@ -569,7 +546,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
-    db.init_db()
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"KNE-Guards dashboard → http://{host}:{port}")
     try:

@@ -14,3 +14,6 @@ kne_guards.db-journal
 # Environment / secrets
 .env
 *.key
+
+# Local Claude Code config
+.claude/

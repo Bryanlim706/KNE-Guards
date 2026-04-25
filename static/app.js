@@ -1,6 +1,26 @@
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
+let sb = null;
+
+async function initSupabase() {
+  if (sb) return sb;
+  const res = await fetch("/config");
+  const cfg = await res.json();
+  if (!cfg.supabase_url || !cfg.supabase_anon_key) {
+    throw new Error("Supabase not configured on the server.");
+  }
+  sb = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  window._sb = sb;
+  return sb;
+}
+
+async function accessToken() {
+  const client = await initSupabase();
+  const { data } = await client.auth.getSession();
+  return data.session ? data.session.access_token : null;
+}
+
 const ROUTES = ["dashboard", "products", "runs", "agents", "settings"];
 
 const state = {
@@ -8,9 +28,35 @@ const state = {
   collections: { specs: [], runs: [] },
   dashboard: { expression: null, challenge: null, simulation: null, meta: "" },
   agents: null,
+  agentsDraft: null,
+  personaResults: {},
+  personaRunning: {},
   runFilter: "all",
   selectedRunId: null,
   runDetails: new Map(),
+};
+
+const AGENTS_DRAFT_KEY = "kne:agents-draft";
+const AGENTS_INPUT_IDS = [
+  "agentsName",
+  "agentsCategory",
+  "agentsPrice",
+  "agentsSegment",
+  "agentsFeatures",
+  "agentsSubstitutes",
+  "agentsPitch",
+];
+const VERDICT_LABELS = {
+  would_try: "Would try",
+  skeptical: "Skeptical",
+  pass: "Pass",
+  wrong_fit: "Wrong fit",
+};
+const VERDICT_CHIP = {
+  would_try: "sev-low",
+  skeptical: "sev-med",
+  pass: "sev-high",
+  wrong_fit: "sev-high",
 };
 
 const TOAST_ICONS = { success: "✓", error: "!", info: "i" };
@@ -104,7 +150,14 @@ function toast(message, { type = "success", title, duration = 3200 } = {}) {
 }
 
 async function apiFetch(url, options) {
-  const res = await fetch(url, options);
+  const token = await accessToken();
+  if (!token) {
+    window.location.href = "/login";
+    throw new Error("unauthenticated");
+  }
+  const opts = { ...(options || {}) };
+  opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${token}` };
+  const res = await fetch(url, opts);
   if (res.status === 401) {
     window.location.href = "/login";
     throw new Error("unauthenticated");
@@ -942,6 +995,7 @@ function renderProducts() {
       </div>
       <div class="card-actions">
         <button type="button" data-action="load">Load into dashboard</button>
+        <button type="button" class="ghost" data-action="load-agents">Load to Agents</button>
         <button type="button" class="ghost" data-action="delete">Delete</button>
       </div>`;
 
@@ -949,6 +1003,13 @@ function renderProducts() {
       applySpec(item.spec);
       window.location.hash = "#/dashboard";
       toast(`Loaded "${item.name}" into the dashboard.`, { type: "info", title: "Product loaded" });
+    });
+
+    card.querySelector('[data-action="load-agents"]').addEventListener("click", () => {
+      applyAgentsSpec(item.spec);
+      state.personaResults = {};
+      window.location.hash = "#/agents";
+      toast(`Loaded "${item.name}" into the Agents page.`, { type: "info", title: "Product loaded" });
     });
 
     card.querySelector('[data-action="delete"]').addEventListener("click", async () => {
@@ -1150,7 +1211,7 @@ function paramBar(label, range) {
 
 async function loadAgents() {
   const personasEl = $("agentsPersonas");
-  const criticEl = $("agentsCritic");
+  const aiEl = $("agentsAI");
 
   if (state.agents) {
     renderAgents();
@@ -1158,7 +1219,7 @@ async function loadAgents() {
   }
 
   personasEl.innerHTML = `<div class="detail-placeholder">Loading agents...</div>`;
-  criticEl.innerHTML = "";
+  if (aiEl) aiEl.innerHTML = "";
 
   try {
     const res = await apiFetch("/agents");
@@ -1172,13 +1233,14 @@ async function loadAgents() {
 
 function renderAgents() {
   const personasEl = $("agentsPersonas");
-  const criticEl = $("agentsCritic");
-  const data = state.agents || { personas: [], critic: null };
+  const aiEl = $("agentsAI");
+  const data = state.agents || { personas: [], critic: null, expression: null };
 
   personasEl.innerHTML = "";
   data.personas.forEach((persona) => {
     const card = document.createElement("article");
     card.className = "card agent-card";
+    card.dataset.archetype = persona.name;
     const bars = Object.entries(persona.params || {})
       .map(([label, range]) => paramBar(label, range))
       .join("");
@@ -1190,29 +1252,191 @@ function renderAgents() {
           <p class="card-sub">${escapeHtml(persona.blurb)}</p>
         </div>
       </div>
-      <div class="param-bars">${bars}</div>`;
+      <div class="param-bars">${bars}</div>
+      <div class="agent-actions">
+        <button type="button" class="primary small" data-run-archetype="${escapeHtml(persona.name)}">Run my pitch</button>
+        <span class="agent-status" data-status-archetype="${escapeHtml(persona.name)}"></span>
+      </div>
+      <div class="agent-result" data-result-archetype="${escapeHtml(persona.name)}" hidden></div>`;
     personasEl.appendChild(card);
+    renderPersonaResult(persona.name);
   });
 
-  criticEl.innerHTML = "";
-  const critic = data.critic;
-  if (!critic) return;
-
-  const criticCard = document.createElement("article");
-  criticCard.className = "card agent-card critic-card";
-  criticCard.innerHTML = `
-    <div class="agent-head">
-      <span class="agent-icon critic">!</span>
-      <div>
-        <p class="card-title">${escapeHtml(critic.name)}</p>
-        <p class="card-sub">${escapeHtml(critic.blurb)}</p>
+  if (!aiEl) return;
+  aiEl.innerHTML = "";
+  const helpers = [];
+  if (data.critic) helpers.push({ ...data.critic, iconClass: "critic", icon: "!" });
+  if (data.expression) helpers.push({ ...data.expression, iconClass: "expression", icon: "E" });
+  helpers.forEach((helper) => {
+    const card = document.createElement("article");
+    card.className = "card agent-card critic-card";
+    card.innerHTML = `
+      <div class="agent-head">
+        <span class="agent-icon ${helper.iconClass}">${escapeHtml(helper.icon)}</span>
+        <div>
+          <p class="card-title">${escapeHtml(helper.name)}</p>
+          <p class="card-sub">${escapeHtml(helper.blurb)}</p>
+        </div>
       </div>
-    </div>
-    <div class="critic-meta">
-      <span class="chip">${escapeHtml(critic.model)}</span>
-      <span class="chip ${critic.ready ? "sev-low" : "sev-med"}">${critic.ready ? "Ready" : "Needs API key"}</span>
+      <div class="critic-meta">
+        <span class="chip">${escapeHtml(helper.model)}</span>
+        <span class="chip ${helper.ready ? "sev-low" : "sev-med"}">${helper.ready ? "Ready" : "Needs API key"}</span>
+      </div>
+      <p class="card-sub" style="margin-top:0.6rem;">Run this helper from the Dashboard.</p>`;
+    aiEl.appendChild(card);
+  });
+}
+
+function collectAgentsSpec() {
+  return {
+    name: $("agentsName").value.trim(),
+    category: $("agentsCategory").value.trim(),
+    price_monthly: Number.parseFloat($("agentsPrice").value || "0"),
+    target_segment: $("agentsSegment").value.trim(),
+    features: normalizeLines($("agentsFeatures").value),
+    substitutes: normalizeCsv($("agentsSubstitutes").value),
+  };
+}
+
+function persistAgentsDraft() {
+  const draft = {
+    spec: collectAgentsSpec(),
+    pitch: $("agentsPitch").value.trim(),
+  };
+  state.agentsDraft = draft;
+  try {
+    localStorage.setItem(AGENTS_DRAFT_KEY, JSON.stringify(draft));
+  } catch (_) {}
+}
+
+function applyAgentsSpec(spec) {
+  if (!spec) return;
+  $("agentsName").value = spec.name || "";
+  $("agentsCategory").value = spec.category || "";
+  $("agentsPrice").value = spec.price_monthly ?? "";
+  $("agentsSegment").value = spec.target_segment || "";
+  $("agentsFeatures").value = (spec.features || []).join("\n");
+  $("agentsSubstitutes").value = (spec.substitutes || []).join(", ");
+  $("agentsPitch").value = spec.pitch_text || "";
+  persistAgentsDraft();
+}
+
+function restoreAgentsDraft() {
+  let draft = null;
+  try {
+    const raw = localStorage.getItem(AGENTS_DRAFT_KEY);
+    if (raw) draft = JSON.parse(raw);
+  } catch (_) {}
+  if (!draft) return;
+  state.agentsDraft = draft;
+  const spec = draft.spec || {};
+  $("agentsName").value = spec.name || "";
+  $("agentsCategory").value = spec.category || "";
+  $("agentsPrice").value = spec.price_monthly ?? "";
+  $("agentsSegment").value = spec.target_segment || "";
+  $("agentsFeatures").value = (spec.features || []).join("\n");
+  $("agentsSubstitutes").value = (spec.substitutes || []).join(", ");
+  $("agentsPitch").value = draft.pitch || "";
+}
+
+async function runPersona(archetype) {
+  if (state.personaRunning[archetype]) return;
+
+  const spec = collectAgentsSpec();
+  const invalid = validateDraft(spec);
+  if (invalid) {
+    state.personaResults[archetype] = { error: invalid };
+    renderPersonaResult(archetype);
+    return;
+  }
+
+  state.personaRunning[archetype] = true;
+  const button = document.querySelector(`[data-run-archetype="${archetype}"]`);
+  const statusEl = document.querySelector(`[data-status-archetype="${archetype}"]`);
+  if (button) button.disabled = true;
+  if (statusEl) statusEl.textContent = "Thinking...";
+
+  try {
+    const res = await apiFetch("/agents/react", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        archetype,
+        spec,
+        pitch_text: $("agentsPitch").value.trim() || null,
+      }),
+    });
+    const data = await readJson(res);
+    state.personaResults[archetype] = data;
+  } catch (error) {
+    state.personaResults[archetype] = { error: error.message };
+  } finally {
+    state.personaRunning[archetype] = false;
+    if (button) button.disabled = false;
+    if (statusEl) statusEl.textContent = "";
+    renderPersonaResult(archetype);
+  }
+}
+
+function renderPersonaResult(archetype) {
+  const card = document.querySelector(`[data-archetype="${archetype}"]`);
+  const slot = document.querySelector(`[data-result-archetype="${archetype}"]`);
+  if (!slot) return;
+  const result = state.personaResults[archetype];
+
+  if (!result) {
+    slot.hidden = true;
+    slot.innerHTML = "";
+    if (card) card.classList.remove("agent-card--persona-active");
+    return;
+  }
+
+  slot.hidden = false;
+
+  if (result.error) {
+    slot.innerHTML = `<div class="banner banner-error">${escapeHtml(result.error)}</div>`;
+    if (card) card.classList.remove("agent-card--persona-active");
+    return;
+  }
+
+  const verdictKey = result.verdict || "skeptical";
+  const verdictLabel = VERDICT_LABELS[verdictKey] || verdictKey;
+  const verdictChip = VERDICT_CHIP[verdictKey] || "sev-med";
+  const hook = result.biggest_hook || {};
+  const objection = result.biggest_objection || {};
+  const sub = result.likely_substitute || {};
+  const fit = Math.max(0, Math.min(1, Number(result.persona_fit_score) || 0));
+  const fitPct = Math.round(fit * 100);
+
+  slot.innerHTML = `
+    <div class="persona-result">
+      <div class="persona-verdict-row">
+        <span class="chip ${verdictChip}">${escapeHtml(verdictLabel)}</span>
+        <div class="fit-meter">
+          <span class="fit-label">Fit</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${fitPct}%"></div></div>
+          <span class="fit-value">${fitPct}%</span>
+        </div>
+      </div>
+      <p class="persona-quote">"${escapeHtml(result.first_reaction || "")}"</p>
+      ${
+        hook.feature
+          ? `<p class="persona-line"><strong>Hook:</strong> ${escapeHtml(hook.feature)} — ${escapeHtml(hook.why_it_lands || "")}</p>`
+          : `<p class="persona-line persona-muted"><strong>Hook:</strong> nothing in the spec catches this archetype.</p>`
+      }
+      <p class="persona-line">
+        <strong>Objection:</strong> ${escapeHtml(objection.issue || "")}
+        ${objection.tied_to_param ? `<span class="chip">${escapeHtml(objection.tied_to_param)}</span>` : ""}
+      </p>
+      ${objection.why ? `<p class="persona-line persona-muted">${escapeHtml(objection.why)}</p>` : ""}
+      <p class="persona-line"><strong>What would flip me:</strong> ${escapeHtml(result.what_would_get_me || "")}</p>
+      ${
+        sub.name
+          ? `<p class="persona-line"><strong>Likely substitute:</strong> ${escapeHtml(sub.name)}${sub.why_it_wins ? ` — ${escapeHtml(sub.why_it_wins)}` : ""}</p>`
+          : ""
+      }
     </div>`;
-  criticEl.appendChild(criticCard);
+  if (card) card.classList.add("agent-card--persona-active");
 }
 
 function loadSettings() {
@@ -1247,16 +1471,13 @@ function setApiStatus() {
 
 async function checkAuth() {
   try {
-    const res = await fetch("/auth/me");
-    if (res.status === 401) {
-      window.location.href = "/login";
-      return false;
-    }
+    const res = await apiFetch("/auth/me");
     const data = await readJson(res);
-    state.me.email = data.email;
+    const displayName = data.email || "Guest";
+    state.me.email = displayName;
     state.me.challengerReady = Boolean(data.challenger_ready);
-    setText("userEmail", data.email);
-    setText("avatarInitial", (data.email || "?").slice(0, 1).toUpperCase());
+    setText("userEmail", displayName);
+    setText("avatarInitial", displayName.slice(0, 1).toUpperCase());
     setApiStatus();
     updateGlobalCounts();
     return true;
@@ -1284,7 +1505,8 @@ function toggleUserMenu(event) {
 
 async function logout() {
   try {
-    await fetch("/auth/logout", { method: "POST" });
+    const client = await initSupabase();
+    await client.auth.signOut();
   } catch (_) {
     // Intentionally ignore logout transport errors and send the user back to login.
   }
@@ -1373,6 +1595,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   ["name", "category", "price", "segment", "features", "substitutes", "pitch", "personas", "days", "seed"].forEach((id) => {
     $(id).addEventListener("input", syncDraftPreview);
   });
+
+  restoreAgentsDraft();
+  AGENTS_INPUT_IDS.forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener("input", persistAgentsDraft);
+  });
+
+  const agentsPersonasEl = $("agentsPersonas");
+  if (agentsPersonasEl) {
+    agentsPersonasEl.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-run-archetype]");
+      if (!btn || btn.disabled) return;
+      runPersona(btn.dataset.runArchetype);
+    });
+  }
 
   document.addEventListener("click", (event) => {
     if (!$("userMenu").contains(event.target)) closeUserMenu();

@@ -254,15 +254,27 @@
     <div class="view-header">
       <div>
         <h1>Agents</h1>
-        <p>The synthetic personas your pitch gets tested on, and the AI critic that will tear it apart first.</p>
+        <p>Test your pitch against each synthetic persona. Fill the brief once — results stay on each card so you can compare side by side.</p>
       </div>
     </div>
 
-    <h3 style="margin-top:0;margin-bottom:0.75rem;">Synthetic personas</h3>
+    <form id="agentsForm" class="panel agents-spec-form" autocomplete="off" onsubmit="return false;">
+      <div class="agents-spec-grid">
+        <label>Name<input id="agentsName" type="text" placeholder="StudyBuddy"></label>
+        <label>Category<input id="agentsCategory" type="text" placeholder="productivity"></label>
+        <label>Price / month (USD)<input id="agentsPrice" type="number" min="0" step="0.01" placeholder="8.99"></label>
+        <label>Target segment<input id="agentsSegment" type="text" placeholder="undergrad students"></label>
+        <label class="agents-spec-wide">Features (one per line)<textarea id="agentsFeatures" rows="3" placeholder="flashcards&#10;spaced repetition&#10;shared decks"></textarea></label>
+        <label class="agents-spec-wide">Known substitutes (comma-separated)<input id="agentsSubstitutes" type="text" placeholder="Anki, Quizlet"></label>
+        <label class="agents-spec-wide">Draft pitch / notes<textarea id="agentsPitch" rows="3" placeholder="An AI flashcard app that adapts to how you forget."></textarea></label>
+      </div>
+    </form>
+
+    <h3 style="margin-top:1.5rem;margin-bottom:0.75rem;">Synthetic personas</h3>
     <div id="agentsPersonas" class="card-grid"></div>
 
-    <h3 style="margin-top:1.5rem;margin-bottom:0.75rem;">AI critic</h3>
-    <div id="agentsCritic" class="card-grid"></div>
+    <h3 style="margin-top:1.5rem;margin-bottom:0.75rem;">AI helpers</h3>
+    <div id="agentsAI" class="card-grid"></div>
   </section>
 
   <!-- ======================= Settings view ======================= -->
@@ -364,6 +376,7 @@
 
 <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="false"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/app.js"></script>
 </body>
 </html>

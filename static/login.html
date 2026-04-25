@@ -38,30 +38,17 @@
     </section>
 
     <section class="auth-panel">
-      <p class="eyebrow">Account</p>
-      <h2>Sign in to your workspace</h2>
-      <p>Use the same form for both returning and first-time accounts.</p>
+      <p class="eyebrow">Jump in</p>
+      <h2>No account needed</h2>
+      <p>Your workspace is created the moment you land. Saved products and runs stay tied to this browser.</p>
 
-      <div class="auth-tabs">
-        <button id="tabLogin" class="auth-tab active" type="button">Log in</button>
-        <button id="tabSignup" class="auth-tab" type="button">Sign up</button>
-      </div>
+      <div id="authError" class="banner banner-error" hidden></div>
 
-      <form id="authForm" class="auth-form" novalidate>
-        <label>Email
-          <input id="email" type="email" autocomplete="email" required>
-        </label>
-        <label>Password
-          <input id="password" type="password" autocomplete="current-password" required minlength="8">
-        </label>
-
-        <div id="authError" class="banner banner-error" hidden></div>
-
-        <button id="authSubmit" type="submit">Log in</button>
-      </form>
+      <button id="startNow" class="auth-cta" type="button">Start now</button>
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/login.js"></script>
 </body>
 </html>
