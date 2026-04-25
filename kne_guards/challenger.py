@@ -77,6 +77,7 @@ def _run_tool(
     response = client.chat.completions.create(
         model=effective_model,
         max_tokens=max_tokens,
+        temperature=0,
         tools=[tool],
         tool_choice={"type": "function", "function": {"name": tool_name}},
         messages=[
@@ -110,13 +111,19 @@ Voice:
 - Probing. Assume the founder is glossing over inconvenient facts.
 - Honest. If a claim is defensible, note it briefly in the steelman — but default to skepticism everywhere else.
 
-Ground rules:
+Ground rules for the critique:
 - Cite the spec's fields by name or value. "Anki is free" beats "your substitute is cheap". "$8.99/month" beats "your price".
 - Surface the 2–3 things MOST LIKELY TO KILL THE PRODUCT in kill_shots. Each must be concrete.
 - Emit exactly one feature_critiques entry per feature in the spec, in the same order.
 - Emit exactly one substitute_risks entry per substitute in the spec, in the same order.
 - Do not invent features, segments, or competitors the founder did not mention. If the spec is thin, flag that — do not fabricate.
-- Your entire response must come through the emit_critique tool. Do not produce prose outside the tool call."""
+- Your entire response must come through the emit_critique tool. Do not produce prose outside the tool call.
+
+Ground rules for mechanism_scores and product_strategy — these are SEPARATE from your critique:
+- Mechanism scores are structural analysis, not expressions of skepticism. A product can have fatal flaws AND score 0.9 on U if the category genuinely drives daily return. Score what the product IS, not how you feel about the pitch.
+- Score based on the product category and features described. If the spec describes a messaging app with group chats, R should reflect how strongly messaging apps replace SMS — not whether you believe the founder will succeed.
+- Use the full 0.0–1.0 range. Do not compress scores toward 0.3–0.5 out of caution. That destroys signal.
+- product_strategy must be one of: viral, workflow, content, replacement, discovery, balanced. Only use "balanced" if the product genuinely has no dominant growth mechanism — it should be rare."""
 
 EMIT_CRITIQUE_TOOL = {
     "type": "function",
@@ -223,14 +230,46 @@ EMIT_CRITIQUE_TOOL = {
                 "mechanism_scores": {
                     "type": "object",
                     "description": (
-                        "Your analytical assessment of the product's lifecycle mechanism strengths. "
-                        "Score each dimension 0.0–1.0 based on the spec and pitch. "
-                        "Be honest — most early-stage products score 0.3–0.6 on most dimensions. "
-                        "R: how strongly does this replace an existing behavior? "
-                        "U: how often does the product give users a reason to return? "
-                        "W: how deeply embedded is this in existing workflows? "
-                        "F: how strong is organic non-viral discovery/inflow? "
-                        "M: how likely are users to actively recommend this to peers?"
+                        "Your analytical assessment of the product's lifecycle mechanism strengths for the STUDENT market specifically. "
+                        "Score each dimension 0.0–1.0. Use the anchors and penalty rules below. Do not compress scores — spread them across the full range.\n\n"
+                        "R — Replacement strength (how completely does this displace an existing student behavior?):\n"
+                        "  0.9 — Messaging app with group chats: fully displaces SMS/email for peer communication\n"
+                        "  0.8 — AI assistant covering essays/code/Q&A: displaces Google + tutors for most tasks\n"
+                        "  0.7 — All-in-one notes + database tool: replaces Google Docs, folders, wikis\n"
+                        "  0.5 — Competes alongside free incumbents but does not fully replace them\n"
+                        "  0.3 — Enters a space already owned by a free dominant tool (Anki, Google Docs)\n"
+                        "  0.1 — No established behavior to replace\n"
+                        "  PENALTY: If the substitutes listed are free AND widely adopted by students (e.g. Facebook, Anki, Google Docs), cap R at 0.4 unless the product is dramatically simpler or faster.\n\n"
+                        "U — Return frequency (how often does the product STRUCTURALLY pull students back — not novelty):\n"
+                        "  0.9 — Messaging or social: dozens of times per day by design\n"
+                        "  0.8 — Streak or gamified loop: daily trigger built into the product mechanic\n"
+                        "  0.6 — Music or ambient tool: background use most days\n"
+                        "  0.4 — Study or revision tool: around deadlines, not daily\n"
+                        "  0.2 — One-off or infrequent utility\n"
+                        "  PENALTY: If return frequency depends on novelty or a single gimmick (e.g. one daily photo prompt with no depth), cap U at 0.5. Novelty fades; structural triggers do not.\n"
+                        "  PENALTY: If adoption is mandated by an institution rather than chosen, reduce U by 0.2 — forced use is not genuine engagement.\n\n"
+                        "W — Workflow fit (how deeply embedded in existing student routines — penalise complexity):\n"
+                        "  0.9 — Sits inside another tool students already use (browser extension, doc plugin)\n"
+                        "  0.8 — Central to a daily work artefact (design files, code repo, lecture notes)\n"
+                        "  0.6 — Part of study routine but opened as a separate app\n"
+                        "  0.4 — Requires students to remember to open it separately\n"
+                        "  0.2 — Requires building a new habit from scratch\n"
+                        "  PENALTY: If the product has a notoriously steep learning curve or confusing UX, reduce W by 0.2. Complexity kills embedding.\n"
+                        "  PENALTY: If a dominant free substitute (Google Docs, WhatsApp) already owns the workflow slot, reduce W by 0.2.\n\n"
+                        "F — Discoverability (how easily do students find this without being told?):\n"
+                        "  0.9 — First result when students search their problem (AI tools, Wolfram Alpha)\n"
+                        "  0.7 — Strong app store category, featured on student YouTube / Reddit\n"
+                        "  0.5 — Findable within a niche, not broadly searched\n"
+                        "  0.3 — Requires paid acquisition or personal referral\n"
+                        "  0.1 — No organic discovery path\n\n"
+                        "M — Word of mouth (how structurally does the product drive peer sharing?):\n"
+                        "  0.9 — Network-effect product: fails without friends, so users recruit peers\n"
+                        "  0.7 — Leaderboards, streaks, or challenges students show to peers\n"
+                        "  0.5 — Recommended in group chats or study forums occasionally\n"
+                        "  0.3 — Used privately with no sharing moment\n"
+                        "  0.1 — Stigma or privacy norm suppresses sharing\n"
+                        "  PENALTY: If the product is mandated top-down (by school or employer), reduce M by 0.3 — imposed tools are not recommended.\n\n"
+                        "Apply penalties where the spec or substitutes warrant them. Score what the product structurally IS, not what the founder hopes it will become."
                     ),
                     "required": ["R", "U", "W", "F", "M"],
                     "properties": {
@@ -252,14 +291,13 @@ EMIT_CRITIQUE_TOOL = {
                         "balanced",
                     ],
                     "description": (
-                        "The dominant growth and retention strategy this product relies on. "
-                        "This determines which mechanism dimensions are load-bearing in the survivability model. "
-                        "viral: grows through peer sharing, M and F dominate. "
-                        "workflow: lives inside existing routines, W dominates. "
-                        "content: returns driven by fresh material, U dominates. "
-                        "replacement: displaces a specific existing tool, R dominates. "
-                        "discovery: found through organic channels, F dominates. "
-                        "balanced: no single dominant strategy — use only if genuinely unclear."
+                        "The dominant growth and retention strategy this product relies on. Pick the ONE that fits best — do not default to 'balanced'.\n"
+                        "viral: product is less useful without friends; growth engine is peer recruitment (messaging apps, social networks, multiplayer tools). Pick this if features include group chats, shared feeds, or invite mechanics.\n"
+                        "workflow: product lives inside existing work or study routines; stickiness comes from being embedded in daily artefacts (Notion, Grammarly, Figma, Slack). Pick this if features include document editing, task management, or team collaboration.\n"
+                        "content: users return because of fresh content or a daily content loop (Spotify, TikTok, Duolingo). Pick this if features include a feed, daily lessons, streaks, or algorithmically served material.\n"
+                        "replacement: product displaces a specific existing tool or behaviour completely (Photomath replaces calculators, ChatGPT replaces Google search). Pick this if the core value is doing something an existing tool does — but dramatically better or faster.\n"
+                        "discovery: users find the product organically when they have a specific need; growth comes from search and SEO (Wolfram Alpha, Quizlet). Pick this if the product answers specific student queries rather than building a habit.\n"
+                        "balanced: genuinely no dominant strategy — use rarely and only if the product spans multiple strategies equally."
                     ),
                 },
             },

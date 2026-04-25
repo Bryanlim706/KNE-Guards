@@ -14,8 +14,8 @@ KILLER_PENALTY = 0.35       # each active killer reduces S_a by this fraction
 LOAD_BEARING_CUTOFF = 0.20  # dimensions with weight >= this are load-bearing
 
 # Decision thresholds
-BUILD_THRESHOLD = 0.65
-DROP_THRESHOLD = 0.40
+BUILD_THRESHOLD = 0.55
+DROP_THRESHOLD = 0.38
 
 # Strategy weight profiles — weights reflect which dimensions are structurally
 # important for each product archetype. Dimensions irrelevant to the strategy

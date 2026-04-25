@@ -131,6 +131,173 @@ PRODUCTS = [
         # becomes the record of your athletic life — hard to leave (W moderate),
         # athletes share runs = strong WOM (M), good SEO for running communities (F)
     },
+
+    # ── STUDENT-SPECIFIC CASES ───────────────────────────────────────────────
+    {
+        "name": "Grammarly",
+        "outcome": "SUCCESS",
+        "m": MechanismScores(R=0.70, U=0.75, W=0.85, F=0.60, M=0.50, strategy="workflow"),
+        # Replaces manual proofreading (R), used every time students write (U),
+        # embedded in browser/docs = hard to remove (W high), strong organic search (F),
+        # moderate WOM — people mention it but don't evangelize (M)
+    },
+    {
+        "name": "Chegg",
+        "outcome": "MIXED",
+        "m": MechanismScores(R=0.55, U=0.50, W=0.40, F=0.45, M=0.30, strategy="content"),
+        # Replaces textbooks and tutoring partially (R moderate), used around exams not daily (U),
+        # subscription fatigue + free alternatives eroding it (W low),
+        # declining organic due to AI alternatives (F), low WOM — stigma around cheating (M)
+    },
+    {
+        "name": "Roam Research",
+        "outcome": "FAILURE",
+        "m": MechanismScores(R=0.50, U=0.55, W=0.45, F=0.25, M=0.40, strategy="workflow"),
+        # Steep learning curve killed student adoption (W lower than expected),
+        # replaced by Notion/Obsidian which are simpler (R moderate),
+        # niche evangelist community but not broad (M moderate),
+        # poor organic discovery — no SEO play (F low)
+    },
+    {
+        "name": "Kahoot",
+        "outcome": "SUCCESS (niche)",
+        "m": MechanismScores(R=0.65, U=0.45, W=0.70, F=0.55, M=0.60, strategy="workflow"),
+        # Replaced paper quizzes in classrooms (R), not used daily — only in class (U low),
+        # deeply embedded in teacher workflows = sticky (W high),
+        # teachers share it with other teachers (M moderate), good organic via education channels (F)
+    },
+    {
+        "name": "Forest App",
+        "outcome": "MIXED",
+        "m": MechanismScores(R=0.35, U=0.50, W=0.30, F=0.35, M=0.45, strategy="replacement"),
+        # Replaces willpower — weak substitute for actual habit change (R low),
+        # used in study sessions but not daily (U moderate),
+        # novelty wears off after a few weeks (W low),
+        # moderate WOM among productivity-focused students (M)
+    },
+    {
+        "name": "ChatGPT (student use)",
+        "outcome": "SUCCESS",
+        "m": MechanismScores(R=0.90, U=0.90, W=0.80, F=0.75, M=0.80, strategy="replacement"),
+        # Replaced Google search, Stack Overflow, tutors (R very high),
+        # used multiple times daily for essays/code/explanations (U very high),
+        # embedded in every academic workflow (W high),
+        # massive organic and viral spread (F and M both high)
+    },
+    {
+        "name": "Coursera",
+        "outcome": "MIXED",
+        "m": MechanismScores(R=0.45, U=0.35, W=0.30, F=0.55, M=0.30, strategy="content"),
+        # Partially replaced self-study books (R moderate), but completion rates are <10% (U low),
+        # not embedded in daily habit — course fatigue is real (W low),
+        # good SEO/organic discovery (F), low WOM — nobody brags about half-finished courses (M)
+    },
+
+    # ── ADDITIONAL STUDENT CASES ─────────────────────────────────────────────
+    {
+        "name": "Discord",
+        "outcome": "SUCCESS",
+        "m": MechanismScores(R=0.75, U=0.90, W=0.70, F=0.55, M=0.85, strategy="viral"),
+        # Replaced group chats, Skype, and study group emails (R), open all day (U),
+        # server structure embeds it in study groups and clubs (W),
+        # strong peer recruitment — your study group drags you in (M high)
+    },
+    {
+        "name": "Quizlet",
+        "outcome": "SUCCESS",
+        "m": MechanismScores(R=0.75, U=0.60, W=0.55, F=0.65, M=0.55, strategy="replacement"),
+        # Replaced paper flashcards and Anki for mainstream students (R),
+        # used before every exam but not daily (U moderate),
+        # embedded in class study routines (W moderate),
+        # strong SEO — students find it searching for subject + flashcards (F),
+        # classmates share decks = moderate WOM (M)
+    },
+    {
+        "name": "Evernote",
+        "outcome": "FAILURE",
+        "m": MechanismScores(R=0.50, U=0.40, W=0.45, F=0.40, M=0.20, strategy="workflow"),
+        # Once promising but Notion ate its lunch (R declining),
+        # bloated app with slow performance killed daily habit (U),
+        # nobody recommends it anymore (M very low),
+        # organic declining as Notion dominates searches (F)
+    },
+    {
+        "name": "Obsidian",
+        "outcome": "SUCCESS (niche)",
+        "m": MechanismScores(R=0.65, U=0.65, W=0.75, F=0.40, M=0.55, strategy="workflow"),
+        # Replaces Notion/Roam for students who want local-first notes (R moderate),
+        # daily writing habit for power users (U), deeply embedded via vault structure (W),
+        # low mainstream discovery — found via Reddit/YouTube rabbit holes (F),
+        # passionate niche advocates but not broad WOM (M)
+    },
+    {
+        "name": "Photomath",
+        "outcome": "SUCCESS (niche)",
+        "m": MechanismScores(R=0.80, U=0.65, W=0.50, F=0.70, M=0.60, strategy="replacement"),
+        # Replaced calculator + manual working for homework (R high),
+        # used whenever students hit a math problem (U moderate-high),
+        # fits naturally into homework flow (W moderate),
+        # students share it — especially in high school (M moderate),
+        # strong organic via app store searches (F)
+    },
+    {
+        "name": "Google Classroom",
+        "outcome": "SUCCESS (niche)",
+        "m": MechanismScores(R=0.70, U=0.70, W=0.90, F=0.45, M=0.20, strategy="workflow"),
+        # Replaced email-based assignment submission and LMS tools (R),
+        # students open it every school day for assignments (U),
+        # mandated by schools = extreme workflow embedding (W very high),
+        # low WOM — students don't choose it, schools impose it (M low),
+        # discovery via institution not organic (F moderate)
+    },
+    {
+        "name": "Figma",
+        "outcome": "SUCCESS",
+        "m": MechanismScores(R=0.85, U=0.80, W=0.90, F=0.60, M=0.70, strategy="workflow"),
+        # Killed Sketch and Adobe XD for design students (R high),
+        # used daily in design courses and side projects (U),
+        # real-time collaboration embeds it in every group project (W very high),
+        # design students evangelize it heavily (M), strong organic via design communities (F)
+    },
+    {
+        "name": "Todoist",
+        "outcome": "MIXED",
+        "m": MechanismScores(R=0.40, U=0.50, W=0.35, F=0.45, M=0.25, strategy="replacement"),
+        # Competes with phone reminders, Notes app, and paper — weak replacement (R),
+        # opened when students remember to, not habitual (U moderate),
+        # sits outside actual study flow — a separate app to maintain (W low),
+        # low WOM — productivity tools are personal and not shared (M)
+    },
+    {
+        "name": "Wolfram Alpha",
+        "outcome": "SUCCESS (niche)",
+        "m": MechanismScores(R=0.70, U=0.55, W=0.50, F=0.65, M=0.40, strategy="discovery"),
+        # Replaces textbook worked examples for STEM students (R moderate-high),
+        # used around problem sets, not daily (U moderate),
+        # fits STEM homework workflow naturally (W moderate),
+        # strong organic via search — students find it searching equations (F),
+        # recommended within STEM communities but not broad (M)
+    },
+    {
+        "name": "Brainly",
+        "outcome": "MIXED",
+        "m": MechanismScores(R=0.45, U=0.45, W=0.30, F=0.60, M=0.30, strategy="content"),
+        # Competes with Google search and ChatGPT for homework answers (R declining fast),
+        # used around deadlines not daily (U moderate),
+        # not embedded in any workflow — pure lookup tool (W low),
+        # decent SEO but losing to AI tools (F moderate),
+        # low WOM — students don't brag about copying answers (M)
+    },
+    {
+        "name": "Microsoft Teams (student)",
+        "outcome": "MIXED",
+        "m": MechanismScores(R=0.55, U=0.60, W=0.65, F=0.25, M=0.15, strategy="workflow"),
+        # Replaced email for class comms but resented by students (R moderate),
+        # used because mandated not by choice (U moderate),
+        # forced into workflow by institutions — sticky but not loved (W),
+        # no organic discovery — imposed top-down (F low),
+        # nobody recommends it to peers (M very low)
+    },
 ]
 
 

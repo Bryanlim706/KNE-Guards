@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
+
 let sb = null;
 
 async function initSupabase() {
@@ -46,6 +47,23 @@ const AGENTS_INPUT_IDS = [
   "agentsSubstitutes",
   "agentsPitch",
 ];
+const STRATEGY_WEIGHTS = {
+  viral:       { R: 0.10, U: 0.20, W: 0.10, F: 0.25, M: 0.35 },
+  workflow:    { R: 0.20, U: 0.20, W: 0.40, F: 0.10, M: 0.10 },
+  content:     { R: 0.15, U: 0.55, W: 0.10, F: 0.20, M: 0.00 },
+  replacement: { R: 0.45, U: 0.20, W: 0.20, F: 0.10, M: 0.05 },
+  discovery:   { R: 0.15, U: 0.15, W: 0.15, F: 0.40, M: 0.15 },
+  balanced:    { R: 0.28, U: 0.24, W: 0.24, F: 0.24, M: 0.00 },
+};
+
+const DIM_LABELS = {
+  R: "Replacement strength",
+  U: "Return frequency",
+  W: "Workflow fit",
+  F: "Discoverability",
+  M: "Word of mouth",
+};
+
 const VERDICT_LABELS = {
   would_try: "Would try",
   skeptical: "Skeptical",
@@ -519,6 +537,109 @@ function setDashboardVisibility() {
   if ($("dashboardEmpty")) $("dashboardEmpty").hidden = hasOutput;
 }
 
+function renderSummary() {
+  const challenge = state.dashboard.challenge;
+  const simulation = state.dashboard.simulation;
+  const panel = $("summaryPanel");
+  if (!panel) return;
+
+  if (!challenge || !simulation || challenge.error || simulation.error) {
+    panel.hidden = true;
+    return;
+  }
+
+  const scores = challenge.mechanism_scores || {};
+  const strategy = challenge.product_strategy || "balanced";
+  const weights = STRATEGY_WEIGHTS[strategy] || STRATEGY_WEIGHTS.balanced;
+  const dims = ["R", "U", "W", "F", "M"];
+
+  // Derive a mechanism score (weighted sum) for the verdict
+  let mechScore = null;
+  const totalWeight = dims.reduce((s, d) => s + (weights[d] || 0), 0);
+  if (totalWeight > 0) {
+    mechScore = dims.reduce((s, d) => s + (scores[d] || 0) * (weights[d] || 0), 0) / totalWeight;
+  }
+  const primaryScore = simulation.survivability_score ?? mechScore ?? simulation.viability_score;
+
+  let verdict, verdictClass;
+  if (primaryScore >= 0.65) { verdict = "BUILD"; verdictClass = "verdict-build"; }
+  else if (primaryScore >= 0.40) { verdict = "ITERATE"; verdictClass = "verdict-iterate"; }
+  else { verdict = "DROP"; verdictClass = "verdict-drop"; }
+
+  const scoreParts = [];
+  if (simulation.survivability_score != null) scoreParts.push(`Survivability ${simulation.survivability_score.toFixed(2)}`);
+  else if (mechScore != null) scoreParts.push(`Mechanism score ${mechScore.toFixed(2)}`);
+  scoreParts.push(`Viability ${simulation.viability_score.toFixed(2)}`);
+
+  // Untapped: scores well but strategy doesn't rely on it
+  const untapped = dims
+    .filter((d) => (scores[d] || 0) > 0.5 && (weights[d] || 0) < 0.2)
+    .map((d) => ({ label: DIM_LABELS[d], score: scores[d] }));
+
+  // Load-bearing strengths: scores well AND strategy relies on it
+  const protecting = dims
+    .filter((d) => (scores[d] || 0) > 0.55 && (weights[d] || 0) >= 0.2)
+    .map((d) => ({ label: DIM_LABELS[d], score: scores[d] }));
+
+  // Worst archetype from simulation
+  const worstArchetype = Object.entries(simulation.persona_breakdown || {})
+    .map(([name, counts]) => {
+      const total = counts.total || 1;
+      return { name, churnRate: (counts.abandoned + counts.switched) / total };
+    })
+    .sort((a, b) => b.churnRate - a.churnRate)[0];
+
+  // Build strengths column
+  let strengthsHtml = "";
+  if (protecting.length) {
+    strengthsHtml += `<h3 class="summary-col-heading">What to protect</h3>
+      <ul class="check-list" style="margin-bottom:1rem;">
+        ${protecting.map((s) => `<li><strong>${escapeHtml(s.label)}</strong><span>Score ${s.score.toFixed(2)} — load-bearing for this strategy. Don't break it.</span></li>`).join("")}
+      </ul>`;
+  }
+  if (untapped.length) {
+    strengthsHtml += `<h3 class="summary-col-heading">Untapped strengths</h3>
+      <ul class="check-list">
+        ${untapped.map((s) => `<li><strong>${escapeHtml(s.label)}</strong><span>Score ${s.score.toFixed(2)} — the ${escapeHtml(strategy)} strategy isn't leveraging this. Consider leaning in.</span></li>`).join("")}
+      </ul>`;
+  }
+  if (!strengthsHtml) {
+    strengthsHtml = `<p style="color:var(--muted);font-size:0.88rem;">No dominant strengths identified — mechanism scores are uniformly weak.</p>`;
+  }
+
+  // Build risks column
+  const killShots = challenge.kill_shots || [];
+  let risksHtml = killShots.length
+    ? `<h3 class="summary-col-heading">Kill shots</h3>
+        <ul class="check-list danger-list" style="margin-bottom:1rem;">
+          ${killShots.map((k) => `<li><strong>${escapeHtml(k.risk)}</strong><span>${escapeHtml(k.why_it_kills)}</span></li>`).join("")}
+        </ul>`
+    : "";
+  if (worstArchetype) {
+    risksHtml += `<h3 class="summary-col-heading">Highest churn risk</h3>
+      <div class="note-block">
+        <strong class="caps">${escapeHtml(worstArchetype.name)}</strong>
+        <p style="margin-top:0.3rem;color:var(--ink-soft);font-size:0.88rem;">${pct(worstArchetype.churnRate)} churned or switched in simulation.</p>
+      </div>`;
+  }
+
+  panel.innerHTML = `
+    <div class="summary-verdict ${escapeHtml(verdictClass)}">
+      <div>
+        <span class="summary-verdict-label">${escapeHtml(verdict)}</span>
+        <span class="summary-scores">${escapeHtml(scoreParts.join(" · "))}</span>
+      </div>
+      <span class="chip">${escapeHtml(strategy)}</span>
+    </div>
+    <div class="summary-cols">
+      <div class="summary-col">${strengthsHtml}</div>
+      <div class="summary-col">${risksHtml}</div>
+    </div>
+    ${challenge.steelman ? `<p class="steelman">${escapeHtml(challenge.steelman)}</p>` : ""}`;
+
+  panel.hidden = false;
+}
+
 function renderSimulation(report, meta = "") {
   state.dashboard.simulation = report;
   state.dashboard.meta = meta;
@@ -578,6 +699,7 @@ function renderSimulation(report, meta = "") {
       : `<li><strong>No sharp drop-off</strong><span>The run did not record any first-time abandon or switch events.</span></li>`
   );
 
+  renderSummary();
   renderSignalBoard();
 }
 
@@ -699,6 +821,7 @@ function renderChallenge(data, meta = "") {
   );
 
   $("cSteelman").textContent = data.steelman || "No steelman argument returned.";
+  renderSummary();
   renderSignalBoard();
 }
 
@@ -716,15 +839,21 @@ async function runSimulation() {
   button.textContent = "Running...";
 
   try {
+    const simBody = {
+      spec: draft.spec,
+      personas: draft.personas,
+      days: draft.days,
+      seed: draft.seed,
+    };
+    const priorChallenge = state.dashboard.challenge;
+    if (priorChallenge && !priorChallenge.error && priorChallenge.mechanism_scores) {
+      simBody.mechanism_scores = priorChallenge.mechanism_scores;
+      simBody.product_strategy = priorChallenge.product_strategy || "balanced";
+    }
     const res = await apiFetch("/simulate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        spec: draft.spec,
-        personas: draft.personas,
-        days: draft.days,
-        seed: draft.seed,
-      }),
+      body: JSON.stringify(simBody),
     });
     const data = await readJson(res);
     if (!res.ok) {
